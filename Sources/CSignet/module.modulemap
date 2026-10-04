@@ -1,0 +1,5 @@
+module CSignet [system] {
+    header "shim.h"
+    link "signet"
+    export *
+}
