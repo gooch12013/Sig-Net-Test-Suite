@@ -16,6 +16,7 @@ let package = Package(
         .executableTarget(
             name: "SignetTestSuite",
             dependencies: ["CSignet"],
+            resources: [.process("Resources")],
             swiftSettings: [.unsafeFlags(["-Xcc", "-I\(prefix)/include"])],
             linkerSettings: [.unsafeFlags(["-L\(prefix)/lib", "-Xlinker", "-rpath", "-Xlinker", "\(prefix)/lib"])]
         ),

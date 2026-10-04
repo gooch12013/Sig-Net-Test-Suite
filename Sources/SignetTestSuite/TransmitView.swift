@@ -101,7 +101,7 @@ struct Fader: View {
     @Binding var value: Double
     let label: String
     let name: String
-    var tint: Color = .accentColor
+    var tint: Color = .sigNet
 
     private let capHeight: CGFloat = 8
 

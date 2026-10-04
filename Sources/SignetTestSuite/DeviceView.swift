@@ -487,7 +487,7 @@ private struct LevelStrip: View {
     var body: some View {
         HStack(alignment: .bottom, spacing: 1) {
             ForEach(Array(levels.enumerated()), id: \.offset) { _, v in
-                Rectangle().fill(Color.accentColor.opacity(0.7)).frame(width: 6, height: max(1, 24 * CGFloat(v) / 255))
+                Rectangle().fill(Color.sigNet.opacity(0.7)).frame(width: 6, height: max(1, 24 * CGFloat(v) / 255))
             }
         }
         .frame(height: 24, alignment: .bottom)

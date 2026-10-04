@@ -1,6 +1,8 @@
 # Sig-Net test suite for macOS
 
-A SwiftUI app for testing Sig-Net equipment from a Mac. It can transmit,
+![Sig-Net](Sources/SignetTestSuite/Resources/SigNetLogo.png)
+
+A SwiftUI app for testing Sig-Net® equipment from a Mac. It can transmit,
 receive, act as a discoverable fixture, and act as a Manager, in Open or Secure
 Mode, so it can test consoles, fixtures and other Managers.
 
@@ -135,3 +137,8 @@ Found by reading the library source, not yet tested:
 | `docs/manager-wire.md` | Packet format, keys and HMAC, with test vectors |
 | `docs/manager-semantics.md` | Discovery, GET/SET, RDM, TID catalogue, timing, spec-vs-library notes |
 | `docs/snow-summary.md` | SNOW scope and why it is deferred |
+| `Sources/SignetTestSuite/Resources/SigNetLogo.png` | Sig-Net logo (white on green), from the official logo pack |
+
+Sig-Net® is a registered trademark. The logo and colours follow the Sig-Net
+Style Guide rev B: the logo is never stretched, and the brand colour is
+#065A60 (lightened in Dark Mode for contrast).

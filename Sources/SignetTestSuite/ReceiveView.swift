@@ -495,7 +495,7 @@ private struct LevelGrid: View {
             let w = size.width / 32, h = size.height / 16
             for (i, v) in levels.prefix(512).enumerated() {
                 let rect = CGRect(x: CGFloat(i % 32) * w, y: CGFloat(i / 32) * h, width: w - 1, height: h - 1)
-                ctx.fill(Path(rect), with: .color(.accentColor.opacity(0.08 + 0.92 * Double(v) / 255)))
+                ctx.fill(Path(rect), with: .color(Color.sigNet.opacity(0.08 + 0.92 * Double(v) / 255)))
                 if numbers {
                     ctx.draw(Text("\(v)").font(.system(size: 8).monospacedDigit()).foregroundColor(v > 140 ? .white : .primary),
                              at: CGPoint(x: rect.midX, y: rect.midY))
