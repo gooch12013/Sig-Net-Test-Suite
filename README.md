@@ -159,3 +159,16 @@ Found by reading the library source, not yet tested:
 Sig-Net® is a registered trademark. The logo and colours follow the Sig-Net
 Style Guide rev B: the logo is never stretched, and the brand colour is
 #065A60 (lightened in Dark Mode for contrast).
+
+## License
+
+The code is under the [PolyForm Noncommercial License 1.0.0](LICENSE). You can
+use, change and share it for any non-commercial purpose, including personal
+projects, research, testing and teaching. You can't use it in a product or
+service that is sold. Anyone who passes on a copy, changed or not, must include
+the license and its `Required Notice` line crediting the author.
+
+The license does not cover the Sig-Net® name or logo
+(`Sources/SignetTestSuite/Resources/SigNetLogo.png`), which belong to their
+owner, or the Sig-Net C library, which is not in this repo and has its own
+terms.
