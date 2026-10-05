@@ -4,3 +4,4 @@ vendor/
 *.xcodeproj
 .impeccable/review/
 .impeccable/questions/
+build/

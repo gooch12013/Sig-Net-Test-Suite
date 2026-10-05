@@ -66,7 +66,9 @@ struct AppView: View {
     private var topStrip: some View {
         HStack(spacing: 12) {
             // Fixed height, aspect kept: the style guide forbids stretching the logo.
-            Image(nsImage: NSImage(contentsOf: Bundle.module.url(forResource: "SigNetLogo", withExtension: "png")!)!)
+            // Bundle.main first: in the packaged .app the logo sits in Contents/Resources (see scripts/make-app.sh).
+            Image(nsImage: NSImage(contentsOf: (Bundle.main.url(forResource: "SigNetLogo", withExtension: "png")
+                ?? Bundle.module.url(forResource: "SigNetLogo", withExtension: "png"))!)!)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(height: 28)
