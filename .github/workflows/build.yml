@@ -7,7 +7,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - run: swift build
-      - run: swift run sig-net --selftest # full list: multicast loopback works on macOS runners
+      - run: swift run sig-net --selftest --offline # hosted runners don't loop multicast back; run the full list locally
 
   linux:
     runs-on: ubuntu-latest

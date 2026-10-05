@@ -98,9 +98,9 @@ Then, in Open and Secure Mode, over multicast loopback inside one process:
 - The Manager discovering another Manager, then the Device: GET/SET of its label, refusal detection, Table of Devices, RDM DEVICE_INFO and (Secure) rejection of a wrong passphrase.
 - Sender to Receiver: multiple universes, priority merging, sync, timecode, preview, and (Secure) rejection of an Open-Mode Sender and of a wrong passphrase.
 
-`--offline` stops after the offline checks. CI uses it on Linux and Windows,
-where hosted runners don't reliably loop multicast back, and runs the full list
-on macOS.
+`--offline` stops after the offline checks. CI uses it on all three platforms,
+because hosted runners don't loop multicast back. Run the full list on a real
+machine.
 
 ## Probing a real device
 
