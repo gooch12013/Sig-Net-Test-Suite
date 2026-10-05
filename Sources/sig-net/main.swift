@@ -20,8 +20,11 @@ func selfTest() -> Int32 {
         s.mode = mode
         s.passphrase = "Sig-Net-Test-9"
         s.interface = interface
-        report("manager loop \(mode.rawValue.lowercased())", ManagerEngine.loopTest(settings: s))
-        report("sender loop \(mode.rawValue.lowercased())", TransmitterEngine.loopTest(settings: s))
+        let tag = mode.rawValue.lowercased()
+        report("manager loop \(tag)", ManagerEngine.loopTest(settings: s))
+        report("sender loop \(tag)", TransmitterEngine.loopTest(settings: s))
+        report("device \(tag)", DeviceEngine.selfTest(settings: s))
+        report("manager+device \(tag)", ManagerEngine.deviceLoopTest(settings: s))
     }
     return failed ? 1 : 0
 }

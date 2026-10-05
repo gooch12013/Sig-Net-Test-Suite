@@ -22,6 +22,85 @@ extension ManagerEngine {
         return nil
     }
 
+    /// Live interop of the Swift Manager against the Swift Node (DeviceEngine): discovery, GET/SET label,
+    /// refusal detection, Table of Devices, RDM DEVICE_INFO and (Secure) wrong-passphrase rejection. nil = pass.
+    public static func deviceLoopTest(settings s: SecurityConfig) -> String? {
+        let dev = DeviceEngine(settings: s, tuid: Identity.tuid("selftest-device"))
+        let started = Date()
+        dev.start()
+        guard dev.running else { return "device did not start: \(dev.status)" }
+        defer { dev.stop() }
+        let m = ManagerEngine(settings: s, tuid: Identity.tuid("selftest-manager")) // never share a lane with a running GUI Manager
+        m.heartbeat = false
+        m.start()
+        guard m.running else { return "start: \(m.status)" }
+        defer { m.stop() }
+        let id = Identity.hex(dev.tuid)
+
+        // Discovery: the initial FULL poll must surface the device with its model name.
+        spin(4) { m.devices[id]?.model == dev.modelName }
+        guard let d = m.devices[id] else { return "poll: device \(id) never replied" }
+        guard d.model == dev.modelName else { return "poll: model \"\(d.model)\" ≠ \"\(dev.modelName)\"" }
+        guard d.label != "" else { return "poll: FULL reply carried no RT_DEVICE_LABEL" }
+
+        // GET model name + label.
+        guard let g = wait({ m.get(dev.tuid, ep: 0, tids: [0x060B, 0x0605], done: $0) }), g.ok else { return "GET: \(m.result)" }
+        guard g.tlvs.first(where: { $0.tid == 0x060B })?.value == [0] + Array(dev.modelName.utf8) else { return "GET model: \(g.text)" }
+
+        // §8.6.4: the Node refuses SETs for 2 s after its link-up.
+        spin(max(0, 2.1 - Date().timeIntervalSince(started))) { false }
+
+        // SET label → echo + SET_REPLY, CHANGE_COUNT +1, then GET returns it.
+        let before = m.devices[id]?.changeCount
+        let label = "Mgr test \(UInt16.random(in: 0...0xFFFF))"
+        let value = [0] + Array(label.utf8)
+        guard let st = wait({ m.set(dev.tuid, ep: 0, tlvs: [ManagerTLV(tid: 0x0605, value: value)], done: $0) }), st.ok,
+              st.tlvs.contains(where: { $0.tid == 0x0003 }) else { return "SET label: \(m.result)" }
+        if let before, m.devices[id]?.changeCount != before &+ 1 {
+            return "SET label: CHANGE_COUNT \(before) → \(m.devices[id]?.changeCount.map(String.init) ?? "nil"), expected +1"
+        }
+        guard let g2 = wait({ m.get(dev.tuid, ep: 0, tids: [0x0605], done: $0) }), g2.tlvs.first?.value == value else {
+            return "GET after SET: \(m.result)"
+        }
+        guard dev.label == label else { return "SET label not mirrored to the device panel (\(dev.label))" }
+
+        // Out-of-range SET (RT_IDENTIFY 9): silence, retry, then the GET probe classifies it as refused.
+        guard let bad = wait({ m.set(dev.tuid, ep: 0, tlvs: [ManagerTLV(tid: 0x0607, value: [9])], done: $0) }), !bad.ok,
+              bad.text.contains("refused") else { return "invalid SET: \(m.result)" }
+
+        // RDM: ToD on EP 1, then GET DEVICE_INFO to the first UID.
+        guard let tod = wait({ m.requestToD(dev.tuid, ep: 1, done: $0) }), tod.ok, let uid = m.devices[id]?.tod[1]?.first else {
+            return "ToD: \(m.result)"
+        }
+        guard let r = wait({ m.rdm(dev.tuid, ep: 1, dest: uid, set: false, pid: 0x0060, done: $0) }), r.ok,
+              ManagerRDM.valid(r.frame), mgrU16(r.frame[21...]) == 0x0060, r.frame[23] == 19 else {
+            return "RDM DEVICE_INFO: \(m.result)"
+        }
+
+        // Negative (Secure only): wrong passphrase → Node stays silent, and the
+        // wrong-key Manager flags the real Node's replies as auth FAIL.
+        if s.mode == .secure {
+            let bad = SecurityConfig()
+            bad.mode = .secure
+            bad.passphrase = "Wrong-Pass-42"
+            bad.interface = s.interface
+            let intruder = ManagerEngine(settings: bad, tuid: [0x7F, 0xF0, 0xC0, 0xDE, 0x00, 0x01])
+            intruder.heartbeat = false
+            intruder.start()
+            guard intruder.running else { return "wrong-key manager: \(intruder.status)" }
+            defer { intruder.stop() }
+            guard let n = wait({ intruder.get(dev.tuid, ep: 0, tids: [0x0605], done: $0) }), !n.ok else {
+                return "wrong passphrase: Node answered a GET signed with the wrong Km_local"
+            }
+            _ = wait { m.get(dev.tuid, ep: 0, tids: [0x0605], done: $0) } // real reply, seen by both
+            guard intruder.log.contains(where: { !$0.tx && $0.uri.contains("/node/\(id)/") && $0.auth == "FAIL" }) else {
+                return "wrong passphrase: Node reply was not flagged auth FAIL"
+            }
+            guard intruder.devices[id]?.anomaly.contains("FAIL") == true else { return "wrong passphrase: no anomaly raised for \(id)" }
+        }
+        return nil
+    }
+
     public static func spin(_ secs: Double, until ok: () -> Bool) {
         let end = Date().addingTimeInterval(secs)
         while Date() < end, !ok() { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
