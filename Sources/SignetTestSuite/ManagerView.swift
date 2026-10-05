@@ -1,3 +1,4 @@
+import SigNet
 import SwiftUI
 
 /// Manager: a rack of discovered devices on the left, the selected device's panel on the right.
@@ -13,7 +14,7 @@ struct ManagerView: View {
     init(manager: Manager, fixtures: FixtureStore) {
         self.manager = manager
         self.fixtures = fixtures
-        settings = manager.settings
+        settings = manager.securitySettings
     }
 
     private var devices: [ManagerDevice] {
@@ -138,7 +139,7 @@ func lampColor(_ d: ManagerDevice) -> Color {
 /// Network interface menu; "Automatic" leaves multicast routing to the OS.
 struct InterfaceMenu: View {
     @ObservedObject var settings: SecuritySettings
-    @State private var interfaces = localIPv4Interfaces()
+    @State private var interfaces = UDPSocket.interfaces()
 
     var body: some View {
         Picker("Network", selection: $settings.interface) {
@@ -151,24 +152,8 @@ struct InterfaceMenu: View {
         .labelsHidden()
         .frame(maxWidth: 200)
         .help("Network interface every device sends and joins multicast on")
-        .onHover { if $0 { interfaces = localIPv4Interfaces() } } // pick up NICs plugged in after launch
+        .onHover { if $0 { interfaces = UDPSocket.interfaces() } } // pick up NICs plugged in after launch
     }
-}
-
-func localIPv4Interfaces() -> [(name: String, ip: String)] {
-    var out: [(String, String)] = []
-    var head: UnsafeMutablePointer<ifaddrs>?
-    guard getifaddrs(&head) == 0 else { return [] }
-    defer { freeifaddrs(head) }
-    var p = head
-    while let i = p?.pointee {
-        defer { p = i.ifa_next }
-        guard let sa = i.ifa_addr, sa.pointee.sa_family == UInt8(AF_INET), i.ifa_flags & UInt32(IFF_LOOPBACK) == 0 else { continue }
-        var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-        guard getnameinfo(sa, socklen_t(sa.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 else { continue }
-        out.append((String(cString: i.ifa_name), String(cString: host)))
-    }
-    return out
 }
 
 /// Poll shapes and engine switches for protocol testing.

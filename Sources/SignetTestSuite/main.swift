@@ -1,4 +1,5 @@
 import AppKit
+import SigNet
 import SwiftUI
 
 let settings = SecuritySettings()
@@ -19,7 +20,7 @@ func selfTest() -> Int32 {
         print("\(ok ? "PASS" : "FAIL") \(label)\(detail.isEmpty ? "" : ": \(detail)")")
         failed = failed || !ok
     }
-    report("timecode counter", Transmitter.selfTestTimecode())
+    report("timecode counter", Timecode.selfTest())
     report("rdm firmware upload (emulator)", FirmwareUpdate.selfTestFTC())
     for mode in SecurityMode.allCases {
         let s = SecuritySettings()
@@ -45,7 +46,7 @@ func selfTest() -> Int32 {
 }
 
 if CommandLine.arguments.contains("--selftest") { exit(selfTest()) }
-if CommandLine.arguments.contains("--probe") { exit(Manager.probe(CommandLine.arguments)) }
+if CommandLine.arguments.contains("--probe") { exit(ManagerEngine.probe(CommandLine.arguments)) }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_: Notification) {

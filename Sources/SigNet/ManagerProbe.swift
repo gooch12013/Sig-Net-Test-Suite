@@ -4,21 +4,21 @@ import Foundation
 /// Runs the Manager tab's own code paths against a real Node and prints one line
 /// per discovery shape, TID GET, SET round-trip and RDM operation.
 /// Never sends RT_OFFBOARD, RT_REBOOT or NW_* SETs; every SET is restored.
-extension Manager {
-    static func probe(_ args: [String]) -> Int32 {
+extension ManagerEngine {
+    public static func probe(_ args: [String]) -> Int32 {
         func arg(_ name: String) -> String? { args.firstIndex(of: name).flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } }
         guard let nodeHex = arg("--node")?.uppercased(), let node = mgrBytes(hex: nodeHex), node.count == 6, let ip = arg("--ip") else {
             print("usage: --probe --node <12 hex TUID> --ip <node IPv4> [--interface <local IPv4>] [--passphrase <p>] [--scope <s>] [--rdm-uid <12 hex>]")
             return 2
         }
-        let s = SecuritySettings()
+        let s = SecurityConfig()
         if let p = arg("--passphrase") { s.mode = .secure; s.passphrase = p } else { s.mode = .open }
         s.scope = arg("--scope") ?? "local"
         s.interface = arg("--interface") ?? ""
         guard s.ready else { print("passphrase rejected: \(s.passphraseProblem ?? "")"); return 2 }
 
         // Own TUID: sharing the GUI Manager's TUID would collide on session/seq and get one of them dropped as replay.
-        let m = Manager(settings: s, tuid: Identity.tuid("probe"))
+        let m = ManagerEngine(settings: s, tuid: Identity.tuid("probe"))
         m.heartbeat = false
         m.unicast = true
         m.start()
@@ -180,17 +180,5 @@ extension Manager {
         if odd.isEmpty && (m.devices[nodeHex]?.anomaly ?? "").isEmpty { print("none") }
         print("final CHANGE_COUNT \(m.devices[nodeHex]?.changeCount.map(String.init) ?? "?") · state \(m.devices[nodeHex]?.state ?? "?")")
         return 0
-    }
-
-    private static func spin(_ secs: Double, until ok: () -> Bool) {
-        let end = Date().addingTimeInterval(secs)
-        while Date() < end, !ok() { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
-    }
-
-    private static func wait(_ op: (@escaping (ManagerResult) -> Void) -> Void) -> ManagerResult? {
-        var r: ManagerResult?
-        op { r = $0 }
-        spin(8) { r != nil }
-        return r
     }
 }

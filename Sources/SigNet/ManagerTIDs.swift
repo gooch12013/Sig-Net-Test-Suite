@@ -2,21 +2,21 @@ import Foundation
 
 /// TID catalogue (docs/manager-semantics.md §4). Data-plane TIDs (0x01xx/0x02xx) are left out:
 /// they never travel on the Command URI.
-struct ManagerTID: Identifiable, Hashable {
-    enum Kind { case label, u8, u16, u32, bits8, bits32, ipv4, ipv6, text, hex }
+public struct ManagerTID: Identifiable, Hashable {
+    public enum Kind { case label, u8, u16, u32, bits8, bits32, ipv4, ipv6, text, hex }
 
-    let tid: UInt16
-    let name: String
-    let family: String
-    let get: Bool
-    let set: Bool
+    public let tid: UInt16
+    public let name: String
+    public let family: String
+    public let get: Bool
+    public let set: Bool
     let scope: String // R root, D data EP, R+D both
     let kind: Kind
-    let layout: String
-    var id: UInt16 { tid }
-    var hex: String { String(format: "0x%04X", tid) }
+    public let layout: String
+    public var id: UInt16 { tid }
+    public var hex: String { String(format: "0x%04X", tid) }
 
-    static let all: [ManagerTID] = [
+    public static let all: [ManagerTID] = [
         .init(tid: 0x0001, name: "POLL", family: "Discovery", get: false, set: false, scope: "R+D", kind: .hex, layout: "TUID, SoemCode u32, TUID_LO, TUID_HI, EP u16, QL u8 (Manager → /poll only)"),
         .init(tid: 0x0002, name: "POLL_REPLY", family: "Discovery", get: false, set: false, scope: "R+D", kind: .hex, layout: "TUID(6), SoemCode u32, CHANGE_COUNT u16"),
         .init(tid: 0x0003, name: "SET_REPLY", family: "Discovery", get: false, set: false, scope: "R+D", kind: .hex, layout: "flags u8 (0), CHANGE_COUNT u16"),
@@ -66,7 +66,7 @@ struct ManagerTID: Identifiable, Hashable {
         .init(tid: 0xFF02, name: "DG_MESSAGE", family: "Diagnostic", get: true, set: false, scope: "R+D", kind: .text, layout: "ASCII ≤64"),
         .init(tid: 0xFF03, name: "DG_LEVEL_FOLDBACK", family: "Diagnostic", get: true, set: false, scope: "D", kind: .hex, layout: "DMX buffer"),
     ]
-    static let byTID = Dictionary(uniqueKeysWithValues: all.map { ($0.tid, $0) })
+    public static let byTID = Dictionary(uniqueKeysWithValues: all.map { ($0.tid, $0) })
 
     static func name(_ tid: UInt16) -> String { byTID[tid]?.name ?? String(format: "TID 0x%04X", tid) }
 
@@ -114,7 +114,7 @@ struct ManagerTID: Identifiable, Hashable {
 
     /// Typed SET value from text: labels take plain text, numbers take decimal or 0x…,
     /// IPv4 dotted quad; everything else (and anything prefixed "hex:") is hex.
-    static func parse(_ tid: UInt16, _ text: String) -> [UInt8]? {
+    public static func parse(_ tid: UInt16, _ text: String) -> [UInt8]? {
         let t = text.trimmingCharacters(in: .whitespaces)
         if t.hasPrefix("hex:") { return mgrBytes(hex: String(t.dropFirst(4))) }
         func num(_ max: UInt64) -> UInt64? {

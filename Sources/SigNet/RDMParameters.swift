@@ -3,8 +3,8 @@ import Foundation
 /// What the app knows about one RDM parameter: a plain name, whether it can be read and set,
 /// and how its parameter data is shown and typed. From ANSI E1.20-2025 Table A-3 and E1.37-1 Table A-1;
 /// manufacturer-specific PIDs are described by the fixture itself (PARAMETER_DESCRIPTION).
-struct RDMSpec {
-    enum Kind {
+public struct RDMSpec {
+    public enum Kind {
         case text(Int)                          // UTF-8, max bytes
         case bool(String, String)               // off / on wording
         case number(bytes: Int, signed: Bool, unit: String, exponent: Int, range: ClosedRange<Int64>?)
@@ -19,18 +19,19 @@ struct RDMSpec {
         case raw
     }
 
-    let name: String
-    let get: Bool
-    let set: Bool
-    let kind: Kind
+    public let name: String
+    public let get: Bool
+    public let set: Bool
+    public let kind: Kind
+    public init(name: String, get: Bool, set: Bool, kind: Kind) { self.name = name; self.get = get; self.set = set; self.kind = kind }
 }
 
-enum RDMCatalog {
+public enum RDMCatalog {
     static func number(_ bytes: Int, _ unit: String = "", range: ClosedRange<Int64>? = nil) -> RDMSpec.Kind {
         .number(bytes: bytes, signed: false, unit: unit, exponent: 0, range: range)
     }
 
-    static let standard: [UInt16: RDMSpec] = [
+    public static let standard: [UInt16: RDMSpec] = [
         0x0070: .init(name: "Product type", get: true, set: false, kind: .productDetails),
         0x0080: .init(name: "Model", get: true, set: false, kind: .text(32)),
         0x0081: .init(name: "Manufacturer", get: true, set: false, kind: .text(32)),
@@ -91,7 +92,7 @@ enum RDMCatalog {
     ]
 
     /// PIDs the panel handles itself (structure, descriptions, sensors, channels) or keeps out of the main panel.
-    static let notListed: Set<UInt16> = [
+    public static let notListed: Set<UInt16> = [
         0x0010, 0x0011, 0x0015, 0x0020, 0x0030, 0x0031, 0x0032, 0x0033, 0x0034,
         0x0050, 0x0051, 0x0055, 0x0056, 0x0058, 0x0059, 0x005A, 0x0060,
         0x00E1, 0x0344, 0x0346, 0x0348, 0x0642, 0x1021, 0x1022,
@@ -101,7 +102,7 @@ enum RDMCatalog {
     ]
 
     /// Offset of the text in each description PID's answer.
-    static let descriptionTextOffset: [UInt16: Int] = [0x00E1: 3, 0x0344: 1, 0x0346: 1, 0x0348: 5, 0x0642: 1, 0x1021: 1]
+    public static let descriptionTextOffset: [UInt16: Int] = [0x00E1: 3, 0x0344: 1, 0x0346: 1, 0x0348: 5, 0x0642: 1, 0x1021: 1]
 
     static let productDetails: [UInt16: String] = [
         0x0001: "Arc lamp", 0x0002: "Metal halide", 0x0003: "Incandescent", 0x0004: "LED", 0x0005: "Fluorescent",
@@ -115,19 +116,19 @@ enum RDMCatalog {
         0x0902: "Test equipment", 0x0A01: "Battery powered", 0x7FFF: "Other",
     ]
 
-    static let units: [UInt8: String] = [
+    public static let units: [UInt8: String] = [
         0x01: "°C", 0x02: "V DC", 0x03: "V AC peak", 0x04: "V AC", 0x05: "A DC", 0x06: "A AC peak", 0x07: "A AC", 0x08: "Hz",
         0x09: "Ω", 0x0A: "W", 0x0B: "kg", 0x0C: "m", 0x0D: "m²", 0x0E: "m³", 0x0F: "kg/m³", 0x10: "m/s", 0x11: "m/s²",
         0x12: "N", 0x13: "J", 0x14: "Pa", 0x15: "s", 0x16: "°", 0x17: "sr", 0x18: "cd", 0x19: "lm", 0x1A: "lx", 0x1B: "IRE",
         0x1C: "B", 0x1D: "dB", 0x1E: "dBV", 0x1F: "dBW", 0x20: "dBm", 0x21: "%", 0x22: "mol/m³", 0x23: "rpm", 0x24: "B/s",
     ]
 
-    static let prefixExponent: [UInt8: Int] = [
+    public static let prefixExponent: [UInt8: Int] = [
         0x01: -1, 0x02: -2, 0x03: -3, 0x04: -6, 0x05: -9, 0x06: -12, 0x07: -15, 0x08: -18, 0x09: -21, 0x0A: -24,
         0x11: 1, 0x12: 2, 0x13: 3, 0x14: 6, 0x15: 9, 0x16: 12, 0x17: 15, 0x18: 18, 0x19: 21, 0x1A: 24,
     ]
 
-    static let sensorTypes: [UInt8: String] = [
+    public static let sensorTypes: [UInt8: String] = [
         0x00: "Temperature", 0x01: "Voltage", 0x02: "Current", 0x03: "Frequency", 0x04: "Resistance", 0x05: "Power",
         0x06: "Mass", 0x07: "Length", 0x08: "Area", 0x09: "Volume", 0x0A: "Density", 0x0B: "Velocity", 0x0C: "Acceleration",
         0x0D: "Force", 0x0E: "Energy", 0x0F: "Pressure", 0x10: "Time", 0x11: "Angle", 0x12: "Position X", 0x13: "Position Y",
@@ -137,7 +138,7 @@ enum RDMCatalog {
     ]
 
     /// A manufacturer-specific PID described by the fixture (PARAMETER_DESCRIPTION, E1.20 §10.4.2).
-    static func described(_ pd: [UInt8]) -> (pid: UInt16, spec: RDMSpec)? {
+    public static func described(_ pd: [UInt8]) -> (pid: UInt16, spec: RDMSpec)? {
         guard pd.count >= 20 else { return nil }
         let pid = mgrU16(pd), size = Int(pd[2]), type = pd[3], cc = pd[4]
         let unit = units[pd[6]] ?? "", exponent = prefixExponent[pd[7]] ?? 0
@@ -165,13 +166,13 @@ enum RDMCatalog {
         return Int64(bitPattern: raw << shift) >> Int64(shift)
     }
 
-    static func scaled(_ v: Int64, exponent: Int, unit: String) -> String {
+    public static func scaled(_ v: Int64, exponent: Int, unit: String) -> String {
         let text = exponent == 0 ? "\(v)" : String(format: "%g", Double(v) * pow(10, Double(exponent)))
         return unit.isEmpty ? text : "\(text) \(unit)"
     }
 
     /// Readable value; `names` are the selector's item names when known.
-    static func show(_ spec: RDMSpec, _ pd: [UInt8], names: [UInt8: String] = [:]) -> String {
+    public static func show(_ spec: RDMSpec, _ pd: [UInt8], names: [UInt8: String] = [:]) -> String {
         switch spec.kind {
         case .text: let s = String(decoding: pd.prefix { $0 != 0 }, as: UTF8.self); return s.isEmpty ? "(empty)" : s
         case .bool(let off, let on): return pd.first.map { $0 == 0 ? off : on } ?? "—"
@@ -203,7 +204,7 @@ enum RDMCatalog {
     }
 
     /// Text the SET field opens with.
-    static func draft(_ spec: RDMSpec, _ pd: [UInt8]?) -> String {
+    public static func draft(_ spec: RDMSpec, _ pd: [UInt8]?) -> String {
         guard let pd else { return "" }
         switch spec.kind {
         case .text: return String(decoding: pd.prefix { $0 != 0 }, as: UTF8.self)
@@ -234,7 +235,7 @@ enum RDMCatalog {
     }
 
     /// Parameter data for a typed value, or a reason it can't be sent.
-    static func encode(_ spec: RDMSpec, _ text: String) -> Result<[UInt8], ValueError> {
+    public static func encode(_ spec: RDMSpec, _ text: String) -> Result<[UInt8], ValueError> {
         func numbers() -> [Int64]? {
             let parts = text.split(whereSeparator: { $0 == "," || $0 == " " }).map(String.init)
             let values = parts.map { $0.hasPrefix("0x") ? Int64($0.dropFirst(2), radix: 16) : Int64($0) }
@@ -267,5 +268,5 @@ enum RDMCatalog {
         }
     }
 
-    struct ValueError: Error { let message: String; init(_ m: String) { message = m } }
+    public struct ValueError: Error { public let message: String; init(_ m: String) { message = m } }
 }

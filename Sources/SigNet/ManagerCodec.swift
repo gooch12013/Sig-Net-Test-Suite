@@ -1,20 +1,15 @@
-import CryptoKit
+import Crypto
 import Foundation
 
 // Hand-built Manager wire layer (docs/manager-wire.md). The library linked by
 // this app has no Manager, so every byte here is from the spec.
 
-struct ManagerError: Error, CustomStringConvertible {
-    let description: String
-    init(_ d: String) { description = d }
-}
-
-func mgrBE16(_ v: UInt16) -> [UInt8] { [UInt8(v >> 8), UInt8(v & 0xFF)] }
-func mgrBE32(_ v: UInt32) -> [UInt8] { [UInt8(v >> 24), UInt8(v >> 16 & 0xFF), UInt8(v >> 8 & 0xFF), UInt8(v & 0xFF)] }
-func mgrU16<C: Collection>(_ b: C) -> UInt16 where C.Element == UInt8 { b.prefix(2).reduce(0) { $0 << 8 | UInt16($1) } }
-func mgrU32<C: Collection>(_ b: C) -> UInt32 where C.Element == UInt8 { b.prefix(4).reduce(0) { $0 << 8 | UInt32($1) } }
-func mgrHex<C: Collection>(_ b: C) -> String where C.Element == UInt8 { b.map { String(format: "%02x", $0) }.joined() }
-func mgrBytes(hex: String) -> [UInt8]? {
+public func mgrBE16(_ v: UInt16) -> [UInt8] { [UInt8(v >> 8), UInt8(v & 0xFF)] }
+public func mgrBE32(_ v: UInt32) -> [UInt8] { [UInt8(v >> 24), UInt8(v >> 16 & 0xFF), UInt8(v >> 8 & 0xFF), UInt8(v & 0xFF)] }
+public func mgrU16<C: Collection>(_ b: C) -> UInt16 where C.Element == UInt8 { b.prefix(2).reduce(0) { $0 << 8 | UInt16($1) } }
+public func mgrU32<C: Collection>(_ b: C) -> UInt32 where C.Element == UInt8 { b.prefix(4).reduce(0) { $0 << 8 | UInt32($1) } }
+public func mgrHex<C: Collection>(_ b: C) -> String where C.Element == UInt8 { b.map { String(format: "%02x", $0) }.joined() }
+public func mgrBytes(hex: String) -> [UInt8]? {
     let s = hex.filter { !" :-".contains($0) }.lowercased().replacingOccurrences(of: "0x", with: "")
     guard s.count % 2 == 0 else { return nil }
     var out: [UInt8] = [], i = s.startIndex
@@ -60,7 +55,7 @@ struct ManagerKeys {
 
 // MARK: - CoAP + Sig-Net options (§2) and HMAC (§4)
 
-struct ManagerPacket {
+public struct ManagerPacket {
     var mid: UInt16 = 0
     var tkl = 0
     var segs: [String] = []
@@ -114,23 +109,23 @@ struct ManagerPacket {
 
     /// As strict as the library decoder (manager-wire.md §2 "Decoder strictness").
     static func decode(_ b: [UInt8]) throws -> ManagerPacket {
-        guard b.count >= 4 else { throw ManagerError("shorter than CoAP header") }
-        guard b.count <= 1400 else { throw ManagerError("datagram over 1400 B") }
-        guard b[0] >> 6 == 1 else { throw ManagerError("CoAP version \(b[0] >> 6)") }
+        guard b.count >= 4 else { throw SigNetError("shorter than CoAP header") }
+        guard b.count <= 1400 else { throw SigNetError("datagram over 1400 B") }
+        guard b[0] >> 6 == 1 else { throw SigNetError("CoAP version \(b[0] >> 6)") }
         var p = ManagerPacket()
         p.tkl = Int(b[0] & 0x0F)
-        guard p.tkl <= 8 else { throw ManagerError("TKL \(p.tkl) > 8") }
+        guard p.tkl <= 8 else { throw SigNetError("TKL \(p.tkl) > 8") }
         p.mid = mgrU16(b[2...])
         var i = 4 + p.tkl, num = 0, seen = Set<Int>()
         func ext(_ n: Int) throws -> Int {
             switch n {
             case 13:
-                guard i < b.count else { throw ManagerError("truncated option header") }
+                guard i < b.count else { throw SigNetError("truncated option header") }
                 i += 1; return Int(b[i - 1]) + 13
             case 14:
-                guard i + 1 < b.count else { throw ManagerError("truncated option header") }
+                guard i + 1 < b.count else { throw SigNetError("truncated option header") }
                 i += 2; return Int(mgrU16(b[(i - 2)...])) + 269
-            case 15: throw ManagerError("reserved option nibble 15")
+            case 15: throw SigNetError("reserved option nibble 15")
             default: return n
             }
         }
@@ -138,24 +133,24 @@ struct ManagerPacket {
             let h = b[i]
             i += 1
             if h == 0xFF {
-                guard i < b.count else { throw ManagerError("payload marker with empty payload") }
+                guard i < b.count else { throw SigNetError("payload marker with empty payload") }
                 p.payload = Array(b[i...])
                 break
             }
-            guard !seen.contains(2236) else { throw ManagerError("option after Sig-Net-Auth") }
+            guard !seen.contains(2236) else { throw SigNetError("option after Sig-Net-Auth") }
             num += try ext(Int(h >> 4))
             let len = try ext(Int(h & 0x0F))
-            guard i + len <= b.count else { throw ManagerError("truncated option \(num)") }
+            guard i + len <= b.count else { throw SigNetError("truncated option \(num)") }
             let v = Array(b[i..<i + len])
             i += len
             switch num {
             case 11: p.segs.append(String(decoding: v, as: UTF8.self))
             case 15: p.query.append(String(decoding: v, as: UTF8.self))
             case 2076, 2108, 2140, 2172, 2204, 2236:
-                guard seen.insert(num).inserted else { throw ManagerError("duplicate option \(num)") }
+                guard seen.insert(num).inserted else { throw SigNetError("duplicate option \(num)") }
                 let want = [2076: 1, 2108: 8, 2140: 2, 2172: 4, 2204: 4][num]
                 guard want.map({ len == $0 }) ?? (len == 0 || len == 32) else {
-                    throw ManagerError("option \(num) length \(len)")
+                    throw SigNetError("option \(num) length \(len)")
                 }
                 switch num {
                 case 2076: p.mode = v[0]
@@ -166,26 +161,27 @@ struct ManagerPacket {
                 default: p.auth = v
                 }
             default:
-                if num & 1 == 1 { throw ManagerError("unknown critical option \(num)") }
+                if num & 1 == 1 { throw SigNetError("unknown critical option \(num)") }
             }
         }
-        guard seen.count == 6 else { throw ManagerError("missing Sig-Net security option(s) \(Set([2076, 2108, 2140, 2172, 2204, 2236]).subtracting(seen).sorted())") }
-        guard [0x00, 0x01, 0xFF].contains(p.mode) else { throw ManagerError(String(format: "security mode 0x%02X", p.mode)) }
-        guard (p.mode == 0) == (p.auth.count == 32) else { throw ManagerError("auth length \(p.auth.count) for mode \(p.mode)") }
+        guard seen.count == 6 else { throw SigNetError("missing Sig-Net security option(s) \(Set([2076, 2108, 2140, 2172, 2204, 2236]).subtracting(seen).sorted())") }
+        guard [0x00, 0x01, 0xFF].contains(p.mode) else { throw SigNetError(String(format: "security mode 0x%02X", p.mode)) }
+        guard (p.mode == 0) == (p.auth.count == 32) else { throw SigNetError("auth length \(p.auth.count) for mode \(p.mode)") }
         if p.mode != 0xFF { // beacons skip these checks in the library too
-            guard b[0] >> 4 & 3 == 1 else { throw ManagerError("not CoAP NON") }
-            guard b[1] == 0x02 else { throw ManagerError(String(format: "CoAP code 0x%02X, not POST", b[1])) }
+            guard b[0] >> 4 & 3 == 1 else { throw SigNetError("not CoAP NON") }
+            guard b[1] == 0x02 else { throw SigNetError(String(format: "CoAP code 0x%02X, not POST", b[1])) }
         }
-        if p.mode != 0, p.session != 0 || p.seq != 0 { throw ManagerError("non-zero session/seq in unauthenticated mode") }
+        if p.mode != 0, p.session != 0 || p.seq != 0 { throw SigNetError("non-zero session/seq in unauthenticated mode") }
         return p
     }
 }
 
 // MARK: - TLV (§10)
 
-struct ManagerTLV: Hashable {
-    var tid: UInt16
-    var value: [UInt8] = []
+public struct ManagerTLV: Hashable {
+    public var tid: UInt16
+    public var value: [UInt8]
+    public init(tid: UInt16, value: [UInt8] = []) { self.tid = tid; self.value = value }
 
     static func encode(_ list: [ManagerTLV]) -> [UInt8] {
         list.flatMap { mgrBE16($0.tid) + mgrBE16(UInt16($0.value.count)) + $0.value }
@@ -215,31 +211,31 @@ struct ManagerURI {
 
     /// Same rules as the library parser: uppercase TUID, decimal ep without leading zeros.
     init(_ segs: [String]) throws {
-        guard segs.count >= 4, segs[0] == "sig-net", segs[1] == "v1" else { throw ManagerError("not /sig-net/v1/…") }
+        guard segs.count >= 4, segs[0] == "sig-net", segs[1] == "v1" else { throw SigNetError("not /sig-net/v1/…") }
         scope = segs[2]
         kind = segs[3]
         switch kind {
         case "poll":
-            guard segs.count == 4 else { throw ManagerError("poll takes no parameters") }
+            guard segs.count == 4 else { throw SigNetError("poll takes no parameters") }
         case "manager", "node", "aux", "node_lost", "node_beacon":
-            guard segs.count == 6 else { throw ManagerError("\(kind) needs TUID and endpoint") }
+            guard segs.count == 6 else { throw SigNetError("\(kind) needs TUID and endpoint") }
             let t = segs[4]
             guard t.count == 12, t.allSatisfy({ "0123456789ABCDEF".contains($0) }), let raw = mgrBytes(hex: t) else {
-                throw ManagerError("bad TUID segment \(t)")
+                throw SigNetError("bad TUID segment \(t)")
             }
             let e = segs[5]
-            guard let v = UInt16(e), e == String(v) else { throw ManagerError("bad endpoint segment \(e)") }
-            if kind == "node_lost" || kind == "node_beacon", v != 0 { throw ManagerError("\(kind) endpoint must be 0") }
+            guard let v = UInt16(e), e == String(v) else { throw SigNetError("bad endpoint segment \(e)") }
+            if kind == "node_lost" || kind == "node_beacon", v != 0 { throw SigNetError("\(kind) endpoint must be 0") }
             tuid = raw
             ep = v
-        default: throw ManagerError("unknown resource \(kind)")
+        default: throw SigNetError("unknown resource \(kind)")
         }
     }
 }
 
 // MARK: - E1.20 frames (built independently of the Device tab's responder, so a shared bug can't cancel out)
 
-enum ManagerRDM {
+public enum ManagerRDM {
     static func frame(dest: [UInt8], src: [UInt8], tn: UInt8, cc: UInt8, pid: UInt16, pd: [UInt8], sub: UInt16 = 0) -> [UInt8] {
         var body: [UInt8] = [0xCC, 0x01, UInt8(24 + pd.count)]
         body += dest
@@ -253,13 +249,13 @@ enum ManagerRDM {
         return body + mgrBE16(body.reduce(0) { $0 &+ UInt16($1) })
     }
 
-    static func valid(_ f: [UInt8]) -> Bool {
+    public static func valid(_ f: [UInt8]) -> Bool {
         guard f.count >= 26, f.count <= 257, f[0] == 0xCC, f[1] == 0x01, Int(f[2]) == f.count - 2,
               Int(f[23]) == f.count - 26 else { return false }
         return f.dropLast(2).reduce(0) { $0 &+ UInt16($1) } == mgrU16(f.suffix(2))
     }
 
-    static let pids: [UInt16: String] = [
+    public static let pids: [UInt16: String] = [
         0x0050: "SUPPORTED_PARAMETERS", 0x0060: "DEVICE_INFO", 0x0082: "DEVICE_LABEL",
         0x00C0: "SOFTWARE_VERSION_LABEL", 0x00F0: "DMX_START_ADDRESS", 0x1000: "IDENTIFY_DEVICE",
     ]
@@ -269,7 +265,7 @@ enum ManagerRDM {
         9: "SUB_DEVICE_OUT_OF_RANGE", 10: "PROXY_BUFFER_FULL",
     ]
 
-    static func uid(_ b: [UInt8]) -> String { String(format: "%02X%02X:%02X%02X%02X%02X", b[0], b[1], b[2], b[3], b[4], b[5]) }
+    public static func uid(_ b: [UInt8]) -> String { String(format: "%02X%02X:%02X%02X%02X%02X", b[0], b[1], b[2], b[3], b[4], b[5]) }
 
     /// One-line decode of a response (or request) frame.
     static func describe(_ f: [UInt8]) -> String {

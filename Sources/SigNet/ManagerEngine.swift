@@ -1,26 +1,25 @@
-import CryptoKit
-import Darwin
+import Crypto
 import Foundation
 
-struct ManagerDevice: Identifiable {
-    let tuid: [UInt8]
-    var id: String { Identity.hex(tuid) }
-    var ip = ""
-    var soem: UInt32 = 0
-    var changeCount: UInt16?
-    var lastSeen = Date()
-    var state = "Online"
-    var auth = ""
-    var anomaly = ""
-    var params: [UInt16: [UInt16: [UInt8]]] = [:] // ep → tid → last value seen
-    var tod: [UInt16: [[UInt8]]] = [:]           // ep → UIDs
-    var rdm: [String] = []                       // RDM responses seen (newest last)
+public struct ManagerDevice: Identifiable {
+    public let tuid: [UInt8]
+    public var id: String { Identity.hex(tuid) }
+    public var ip = ""
+    public var soem: UInt32 = 0
+    public var changeCount: UInt16?
+    public var lastSeen = Date()
+    public var state = "Online"
+    public var auth = ""
+    public var anomaly = ""
+    public var params: [UInt16: [UInt16: [UInt8]]] = [:] // ep → tid → last value seen
+    public var tod: [UInt16: [[UInt8]]] = [:]           // ep → UIDs
+    public var rdm: [String] = []                       // RDM responses seen (newest last)
 
-    func root(_ tid: UInt16) -> [UInt8]? { params[0]?[tid] }
-    func text(_ tid: UInt16) -> String { root(tid).map { ManagerTID.describe(tid, $0) } ?? "–" }
-    var label: String { root(0x0605).map { String(decoding: $0.dropFirst(), as: UTF8.self) } ?? "" }
-    var model: String { root(0x060B).map { String(decoding: $0.dropFirst(), as: UTF8.self) } ?? "" }
-    var roles: String {
+    public func root(_ tid: UInt16) -> [UInt8]? { params[0]?[tid] }
+    public func text(_ tid: UInt16) -> String { root(tid).map { ManagerTID.describe(tid, $0) } ?? "–" }
+    public var label: String { root(0x0605).map { String(decoding: $0.dropFirst(), as: UTF8.self) } ?? "" }
+    public var model: String { root(0x060B).map { String(decoding: $0.dropFirst(), as: UTF8.self) } ?? "" }
+    public var roles: String {
         guard let v = root(0x0609), v.count == 4 else { return "–" }
         let r = mgrU32(v)
         let names = [(0, "Node"), (1, "Sender"), (2, "Manager"), (3, "Visualiser"), (6, "RootFW"), (7, "Open")]
@@ -28,25 +27,25 @@ struct ManagerDevice: Identifiable {
     }
 }
 
-struct ManagerLogEntry: Identifiable {
-    let id = UUID()
-    let time = Date()
-    let tx: Bool
-    let peer: String
-    let uri: String
-    let sender: String
-    let mode: String
-    let lane: String
-    let auth: String
-    let tlvs: String
-    let hex: String
+public struct ManagerLogEntry: Identifiable {
+    public let id = UUID()
+    public let time = Date()
+    public let tx: Bool
+    public let peer: String
+    public let uri: String
+    public let sender: String
+    public let mode: String
+    public let lane: String
+    public let auth: String
+    public let tlvs: String
+    public let hex: String
 }
 
-struct ManagerResult {
-    var ok = false
-    var text = ""
-    var tlvs: [ManagerTLV] = []
-    var frame: [UInt8] = []
+public struct ManagerResult {
+    public var ok = false
+    public var text = ""
+    public var tlvs: [ManagerTLV] = []
+    public var frame: [UInt8] = []
 }
 
 /// Manager-side freshness (§8.6.1): session per TUID, seq per 8-byte Sender-ID.
@@ -74,27 +73,30 @@ private struct ManagerFreshness {
 }
 
 /// Hand-built Sig-Net Manager: discovery, GET/SET, RDM tunnelling and a packet log.
-/// ponytail: everything runs on the main queue (socket reads via a main-queue
-/// DispatchSource), so there is no locking; move decode/HMAC off main if a
-/// network ever floods 239.254.255.252-255.
-final class Manager: ObservableObject {
-    static let soem: UInt32 = 0x7FF0_0003 // ESTA prototyping ID + variant
+/// Plain class; the app's ObservableObject subclass turns `willChange()` into objectWillChange.
+/// ponytail: everything runs on the main queue (socket reads delivered on main),
+/// so there is no locking; move decode/HMAC off main if a network ever floods
+/// 239.254.255.252-255.
+open class ManagerEngine {
+    public static let soem: UInt32 = 0x7FF0_0003 // ESTA prototyping ID + variant
     static let groups = ["239.254.255.252", "239.254.255.253", "239.254.255.254", "239.254.255.255"]
     static let pollGroup = "239.254.255.252", sendGroup = "239.254.255.251", nodeGroup = "239.254.255.253"
 
-    let settings: SecuritySettings
-    let tuid: [UInt8]
-    @Published private(set) var running = false
-    @Published private(set) var status = "Stopped"
-    @Published private(set) var devices: [String: ManagerDevice] = [:]
-    @Published private(set) var log: [ManagerLogEntry] = []
-    @Published private(set) var result = ""
-    @Published private(set) var busy = false
-    @Published var heartbeat = true
-    @Published var unicast = true
+    public let settings: SecurityConfig
+    public let tuid: [UInt8]
+    public private(set) var running = false { willSet { willChange() } }
+    public private(set) var status = "Stopped" { willSet { willChange() } }
+    public private(set) var devices: [String: ManagerDevice] = [:] { willSet { willChange() } }
+    public private(set) var log: [ManagerLogEntry] = [] { willSet { willChange() } }
+    public private(set) var result = "" { willSet { willChange() } }
+    public private(set) var busy = false { willSet { willChange() } }
+    public var heartbeat = true { willSet { willChange() } }
+    public var unicast = true { willSet { willChange() } }
 
-    private var fd: Int32 = -1
-    private var source: DispatchSourceRead?
+    /// Called before any property above changes.
+    open func willChange() {}
+
+    private var socket: UDPSocket?
     private var timer: Timer?
     private var keys: ManagerKeys?
     private var secure = false
@@ -110,25 +112,25 @@ final class Manager: ObservableObject {
 
     private struct Pending {
         enum Kind { case get, set, probe, rdm(tn: UInt8), tod }
-        var id = UUID()
+        public var id = UUID()
         let target: [UInt8]
         let ep: UInt16
         let tlvs: [ManagerTLV]
-        let kind: Kind
+        public let kind: Kind
         let timeout: TimeInterval
         var attempt = 0
         var collected: [ManagerTLV] = []
         let done: (ManagerResult) -> Void
     }
 
-    init(settings: SecuritySettings, tuid: [UInt8] = Identity.tuid("manager")) {
+    public init(settings: SecurityConfig, tuid: [UInt8] = Identity.tuid("manager")) {
         self.settings = settings
         self.tuid = tuid
     }
 
     // MARK: - Lifecycle
 
-    func start() {
+    public func start() {
         guard !running, settings.ready else { return }
         secure = settings.mode == .secure
         scope = settings.scopeOrDefault
@@ -154,12 +156,11 @@ final class Manager: ObservableObject {
         timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in self?.tick() }
     }
 
-    func stop() {
+    public func stop() {
         timer?.invalidate()
         timer = nil
-        if let s = source { s.cancel() } else if fd >= 0 { close(fd) } // cancel handler closes fd
-        source = nil
-        fd = -1
+        socket?.close()
+        socket = nil
         keys = nil
         if let p = pending { pending = nil; p.done(ManagerResult(text: "stopped")) }
         busy = false
@@ -172,48 +173,18 @@ final class Manager: ObservableObject {
     private func bumpSession() throws {
         let key = "manager.session.\(Identity.hex(tuid))"
         let stored = UInt32(clamping: UserDefaults.standard.integer(forKey: key))
-        guard stored < 0xFFFF_FFFE else { throw ManagerError("Session ID exhausted: rekey or use a new TUID") }
+        guard stored < 0xFFFF_FFFE else { throw SigNetError("Session ID exhausted: rekey or use a new TUID") }
         session = stored + 1
         UserDefaults.standard.set(Int(session), forKey: key)
-        guard UserDefaults.standard.synchronize() else { throw ManagerError("Could not persist Session ID") }
+        guard UserDefaults.standard.synchronize() else { throw SigNetError("Could not persist Session ID") }
         seq = 0
     }
 
     private func openSocket() throws {
-        fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
-        guard fd >= 0 else { throw ManagerError("socket: \(String(cString: strerror(errno)))") }
-        var on: Int32 = 1, ttl: UInt8 = 32, loop: UInt8 = 1
-        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, socklen_t(MemoryLayout<Int32>.size))
-        setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &on, socklen_t(MemoryLayout<Int32>.size))
-        setsockopt(fd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, 1)
-        setsockopt(fd, IPPROTO_IP, IP_MULTICAST_LOOP, &loop, 1)
-        _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
-        var nic = in_addr(s_addr: INADDR_ANY)
-        let interface = settings.interface
-        if !interface.isEmpty {
-            guard inet_pton(AF_INET, interface, &nic) == 1 else { throw ManagerError("Interface must be an IPv4 address") }
-            setsockopt(fd, IPPROTO_IP, IP_MULTICAST_IF, &nic, socklen_t(MemoryLayout<in_addr>.size))
-        }
-        var addr = sockaddr_in()
-        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = in_port_t(5683).bigEndian
-        let bound = withUnsafePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
-        }
-        guard bound == 0 else { throw ManagerError("bind 5683: \(String(cString: strerror(errno)))") }
-        for g in Self.groups {
-            var mreq = ip_mreq(imr_multiaddr: in_addr(s_addr: inet_addr(g)), imr_interface: nic)
-            guard setsockopt(fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, socklen_t(MemoryLayout<ip_mreq>.size)) == 0 else {
-                throw ManagerError("join \(g): \(String(cString: strerror(errno)))")
-            }
-        }
-        let src = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .main)
-        let sock = fd
-        src.setEventHandler { [weak self] in self?.readable() }
-        src.setCancelHandler { close(sock) }
-        src.resume()
-        source = src
+        let s = try UDPSocket(interface: settings.interface)
+        socket = s // closed by stop() if a join throws
+        for g in Self.groups { try s.join(g) }
+        s.receive(on: .main) { [weak self] bytes, ip in self?.handle(bytes, from: ip) }
     }
 
     private func tick() {
@@ -229,12 +200,12 @@ final class Manager: ObservableObject {
         }
     }
 
-    func forget(_ id: String) {
+    public func forget(_ id: String) {
         devices[id] = nil
         fresh.forget(id)
     }
 
-    func clearLog() { log.removeAll() }
+    public func clearLog() { log.removeAll() }
 
     // MARK: - TX
 
@@ -250,7 +221,7 @@ final class Manager: ObservableObject {
 
     @discardableResult
     private func send(_ path: [String], _ tlvs: [ManagerTLV], key: SymmetricKey?, to host: String) -> Bool {
-        guard fd >= 0, let lane = nextLane() else { return false }
+        guard let socket, let lane = nextLane() else { return false }
         var p = ManagerPacket()
         p.mid = mid
         mid = mid == 0xFFFF ? 1 : mid + 1 // never 0: MsgID 0 bypasses the Open-Mode duplicate filter
@@ -267,19 +238,11 @@ final class Manager: ObservableObject {
             result = "Not sent: \(bytes.count) B packet / \(p.payload.count) B payload over the 1400/1200 B limit"
             return false
         }
-        var addr = sockaddr_in()
-        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = in_port_t(5683).bigEndian
-        addr.sin_addr.s_addr = inet_addr(host)
-        let n = withUnsafePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                sendto(fd, bytes, bytes.count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-            }
-        }
+        var error: Error?
+        do { try socket.send(bytes, to: host) } catch let e { error = e }
         record(tx: true, peer: host, p, bytes, auth: secure ? "signed" : "none (Open)", tlvs: tlvs)
-        if n < 0 { status = "sendto \(host): \(String(cString: strerror(errno)))" }
-        return n >= 0
+        if let error { status = "\(error)" }
+        return error == nil
     }
 
     private func announce() { // §10.2.5: every Device, Managers included
@@ -294,7 +257,7 @@ final class Manager: ObservableObject {
     }
 
     /// TID_POLL. `to` = unicast IP for targeted polls, else multicast.
-    func poll(lo: [UInt8] = [0, 0, 0, 0, 0, 0], hi: [UInt8] = [UInt8](repeating: 0xFF, count: 6),
+    public func poll(lo: [UInt8] = [0, 0, 0, 0, 0, 0], hi: [UInt8] = [UInt8](repeating: 0xFF, count: 6),
               level: UInt8, ep: UInt16, to host: String? = nil) {
         guard running else { return }
         let v = tuid + mgrBE32(Self.soem) + lo + hi + mgrBE16(ep) + [level]
@@ -354,29 +317,29 @@ final class Manager: ObservableObject {
         p.done(r)
     }
 
-    func get(_ target: [UInt8], ep: UInt16, tids: [UInt16], done: @escaping (ManagerResult) -> Void = { _ in }) {
+    public func get(_ target: [UInt8], ep: UInt16, tids: [UInt16], done: @escaping (ManagerResult) -> Void = { _ in }) {
         begin(Pending(target: target, ep: ep, tlvs: tids.map { ManagerTLV(tid: $0) }, kind: .get, timeout: 0.5, done: done))
     }
 
-    func set(_ target: [UInt8], ep: UInt16, tlvs: [ManagerTLV], done: @escaping (ManagerResult) -> Void = { _ in }) {
+    public func set(_ target: [UInt8], ep: UInt16, tlvs: [ManagerTLV], done: @escaping (ManagerResult) -> Void = { _ in }) {
         begin(Pending(target: target, ep: ep, tlvs: tlvs, kind: .set, timeout: 0.5, done: done))
     }
 
     /// TOD_CONTROL 0x01: flush the ToD and run full discovery. RDM TLVs are never
     /// echoed or SET_REPLY'd (§10.5), so there is nothing to wait for; request the ToD afterwards.
-    func flushToD(_ target: [UInt8], ep: UInt16) {
+    public func flushToD(_ target: [UInt8], ep: UInt16) {
         guard running, pending == nil else { return }
         devices[Identity.hex(target)]?.tod[ep] = []
         command(target, ep, [ManagerTLV(tid: 0x0303, value: [0x01])], attempt: 0)
     }
 
-    func requestToD(_ target: [UInt8], ep: UInt16, done: @escaping (ManagerResult) -> Void = { _ in }) {
+    public func requestToD(_ target: [UInt8], ep: UInt16, done: @escaping (ManagerResult) -> Void = { _ in }) {
         devices[Identity.hex(target)]?.tod[ep] = []
         begin(Pending(target: target, ep: ep, tlvs: [ManagerTLV(tid: 0x0303, value: [0x00])], kind: .tod, timeout: 1.5, done: done))
     }
 
     /// GET/SET only: discovery (CC 0x10, PIDs 1-3) is never tunnelled (§10.5.5).
-    func rdm(_ target: [UInt8], ep: UInt16, dest: [UInt8], set: Bool, pid: UInt16, pd: [UInt8] = [],
+    public func rdm(_ target: [UInt8], ep: UInt16, dest: [UInt8], set: Bool, pid: UInt16, pd: [UInt8] = [],
              upload: Bool = false, done: @escaping (ManagerResult) -> Void = { _ in }) {
         guard !(1...3).contains(pid), dest.count == 6, pd.count <= 231 else {
             return done(ManagerResult(text: "Refused locally: discovery PIDs / bad UID / PD > 231 B"))
@@ -391,19 +354,6 @@ final class Manager: ObservableObject {
     }
 
     // MARK: - RX
-
-    private func readable() {
-        var buf = [UInt8](repeating: 0, count: 2048)
-        while true {
-            var from = sockaddr_in()
-            var len = socklen_t(MemoryLayout<sockaddr_in>.size)
-            let n = withUnsafeMutablePointer(to: &from) {
-                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { recvfrom(fd, &buf, buf.count, 0, $0, &len) }
-            }
-            guard n > 0 else { return }
-            handle(Array(buf[0..<n]), from: String(cString: inet_ntoa(from.sin_addr)))
-        }
-    }
 
     private func handle(_ bytes: [UInt8], from ip: String) {
         let p: ManagerPacket

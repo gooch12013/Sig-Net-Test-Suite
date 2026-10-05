@@ -7,11 +7,14 @@ import Foundation
 ///
 /// Cancel: `cancel()` makes the next request or delay slice stop the transfer, which then sends SET:FTC_CANCEL if a
 /// session is open (§13.4). Once SET:FTC_COMMIT is sent, cancel is ignored.
-final class FirmwareUpdate {
-    struct Reply { var type: Int32; var cc: UInt8; var pid: UInt16; var pd: [UInt8] }
-    typealias Transport = (_ cc: UInt8, _ pid: UInt16, _ pd: [UInt8]) -> Reply?
+public final class FirmwareUpdate {
+    public struct Reply {
+        var type: Int32, cc: UInt8, pid: UInt16, pd: [UInt8]
+        init(type: Int32, cc: UInt8, pid: UInt16, pd: [UInt8]) { self.type = type; self.cc = cc; self.pid = pid; self.pd = pd }
+    }
+    public typealias Transport = (_ cc: UInt8, _ pid: UInt16, _ pd: [UInt8]) -> Reply?
 
-    enum Phase: String { case initiate = "Initiate", waiting = "Waiting", transferring = "Transferring",
+    public enum Phase: String { case initiate = "Initiate", waiting = "Waiting", transferring = "Transferring",
                          validating = "Validating", committing = "Committing", rebooting = "Rebooting", checking = "Checking" }
 
     enum Code: Error {
@@ -19,44 +22,44 @@ final class FirmwareUpdate {
         case badDeclaration, tooManyResends, noTransferComplete, tooManyPolls, noDownload, needKey, fileCRCMismatch
     }
 
-    struct Result {
+    public struct Result {
         /// Last ResponseStatus / ResponseData the fixture sent (FTC_CANCEL's excluded).
         var status: UInt8 = 0
         var data: UInt32 = 0
         /// The SET:FTC_INITIATE declarations of the (last) session.
-        var declared = FTC.Declarations()
+        public var declared = FTC.Declarations()
         /// Ours over the file sent or received; the fixture's (CalculatedFileCRC on upload, FileCRC on download).
-        var fileCRC: UInt16 = 0
-        var responderCRC: UInt16 = 0
+        public var fileCRC: UInt16 = 0
+        public var responderCRC: UInt16 = 0
         var resends = 0
         var bootloaderSwitches = 0
         var commitTime: UInt32 = 0
         var expectedUID: [UInt8] = []
     }
 
-    struct Outcome {
+    public struct Outcome {
         var code: Code
-        var result: Result
+        public var result: Result
         var cancelled: Bool
-        var ok: Bool { code == .ok && !cancelled }
+        public var ok: Bool { code == .ok && !cancelled }
     }
 
     /// One file the fixture offers (FTC_FILELIST entry, size from GET:FTC_INITIATE for it).
-    struct FixtureFile: Hashable {
-        var id: UInt8
-        var capabilities: UInt32
-        var size: UInt32
-        var description: String
-        var suffix: String
-        var acceptsUpload: Bool { capabilities & FTC.Cap.acceptUpload != 0 }
-        var testModeOK: Bool { capabilities & FTC.Cap.testModeSupported != 0 }
-        var acceptsDownload: Bool { capabilities & FTC.Cap.acceptDownload != 0 }
-        var needsKey: Bool { capabilities & FTC.Cap.downloadKey != 0 }
+    public struct FixtureFile: Hashable {
+        public var id: UInt8
+        public var capabilities: UInt32
+        public var size: UInt32
+        public var description: String
+        public var suffix: String
+        public var acceptsUpload: Bool { capabilities & FTC.Cap.acceptUpload != 0 }
+        public var testModeOK: Bool { capabilities & FTC.Cap.testModeSupported != 0 }
+        public var acceptsDownload: Bool { capabilities & FTC.Cap.acceptDownload != 0 }
+        public var needsKey: Bool { capabilities & FTC.Cap.downloadKey != 0 }
         var hasFileCRC: Bool { capabilities & FTC.Cap.generateFileCRC != 0 }
     }
 
     /// Main queue only: one transfer (upload or download) at a time, app-wide. The Manager holds back other RDM meanwhile.
-    static var active = false
+    public static var active = false
 
     /// Bounds on IN_PROGRESS polls per step, PacketCRC resends per packet (§13.2.2, §13.6.1), bootloader switches.
     static let maxPolls = 1000, maxResends = 3, maxSwitches = 3
@@ -64,7 +67,7 @@ final class FirmwareUpdate {
     private let transport: Transport
     private let sleep: (UInt32) -> Void
     /// Phase and bytes the fixture has confirmed, called on the thread running the transfer.
-    var progress: (Phase, UInt32) -> Void = { _, _ in }
+    public var progress: (Phase, UInt32) -> Void = { _, _ in }
     /// Every request sent, for tests (cc, pid, pd).
     var sentLog: ((UInt8, UInt16, [UInt8]) -> Void)?
     private(set) var lastLog = ""
@@ -78,18 +81,18 @@ final class FirmwareUpdate {
     private var session: UInt8 = 0, flags: UInt16 = 0, sessionOpen = false
     private var result = Result()
 
-    init(transport: @escaping Transport, sleep: @escaping (UInt32) -> Void) {
+    public init(transport: @escaping Transport, sleep: @escaping (UInt32) -> Void) {
         self.transport = transport
         self.sleep = sleep
     }
 
-    func cancel() { lock.lock(); cancelFlag = true; lock.unlock() }
+    public func cancel() { lock.lock(); cancelFlag = true; lock.unlock() }
     private var stopping: Bool { lock.lock(); defer { lock.unlock() }; return cancelFlag && !commitSent }
 
     // MARK: - Upload
 
     /// Upload `file` to FileID `fileID` (0 = the fixture's only file).
-    func run(file: [UInt8], testMode: Bool, fileID: UInt8 = 0, session: UInt8 = .random(in: 1...0xFE)) -> Outcome {
+    public func run(file: [UInt8], testMode: Bool, fileID: UInt8 = 0, session: UInt8 = .random(in: 1...0xFE)) -> Outcome {
         transfer(session, flags: testMode ? FTC.TF.testMode : 0) {
             progress(.initiate, 0)
             let g = try declarations(fileID, flags)
@@ -155,7 +158,7 @@ final class FirmwareUpdate {
 
     /// Download FileID `fileID` (0 = the fixture's only file). Returns the outcome and the bytes received; on success
     /// `result.fileCRC` is our CRC of them, equal to `result.responderCRC` when the fixture generates a FileCRC.
-    func download(fileID: UInt8, maxSize: UInt32 = 16 << 20, session: UInt8 = .random(in: 1...0xFE)) -> (Outcome, [UInt8]) {
+    public func download(fileID: UInt8, maxSize: UInt32 = 16 << 20, session: UInt8 = .random(in: 1...0xFE)) -> (Outcome, [UInt8]) {
         var data: [UInt8] = []
         let o = transfer(session, flags: FTC.TF.download) {
             progress(.initiate, 0)
@@ -211,7 +214,7 @@ final class FirmwareUpdate {
     // MARK: - File list
 
     /// FTC_FILELIST (with each file's size), or the single file when the fixture has no list. nil = no answer.
-    func fileList() -> [FixtureFile]? {
+    public func fileList() -> [FixtureFile]? {
         guard let g = try? declarations(FTC.DEF.noFileIDOffered, 0) else { return nil }
         var files = [FixtureFile(id: g.fileID, capabilities: g.capabilities, size: 0, description: "", suffix: "")]
         if g.fileID == FTC.DEF.multipleFileID {
@@ -358,7 +361,7 @@ final class FirmwareUpdate {
     /// The Manager follows ACK_TIMER itself (waits, then takes the late reply), so the controller only ever sees ACK,
     /// ACK_OVERFLOW or NACK here. Requests are marked `upload`, so they still go out while the Manager holds everything else back.
     /// `busySeconds`: how long to keep retrying while another panel holds the Manager.
-    static func managerTransport(_ manager: Manager, node: [UInt8], ep: UInt16, dest: [UInt8], busySeconds: Double = 2) -> Transport {
+    public static func managerTransport(_ manager: ManagerEngine, node: [UInt8], ep: UInt16, dest: [UInt8], busySeconds: Double = 2) -> Transport {
         { cc, pid, pd in
             for _ in 0..<max(1, Int(busySeconds / 0.05)) {
                 var out: ManagerResult?
@@ -376,12 +379,12 @@ final class FirmwareUpdate {
         }
     }
 
-    static func realSleep(_ ms: UInt32) { Thread.sleep(forTimeInterval: Double(ms) / 1000) }
+    public static func realSleep(_ ms: UInt32) { Thread.sleep(forTimeInterval: Double(ms) / 1000) }
 
     // MARK: - Plain words
 
     /// What went wrong, for the main panel.
-    static func reason(_ o: Outcome) -> String {
+    public static func reason(_ o: Outcome) -> String {
         if o.cancelled { return "Cancelled. The fixture was told to end the transfer." }
         switch o.code {
         case .ok: return "Complete"
@@ -405,7 +408,7 @@ final class FirmwareUpdate {
         }
     }
 
-    static func statusText(_ s: UInt8) -> String {
+    public static func statusText(_ s: UInt8) -> String {
         switch s {
         case FTC.RS.modalError: return "The fixture wasn't ready for that step."
         case FTC.RS.sessionIDMismatch: return "The fixture is busy with another transfer."

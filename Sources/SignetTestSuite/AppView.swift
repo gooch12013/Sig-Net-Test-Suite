@@ -1,4 +1,5 @@
 import AppKit
+import SigNet
 import SwiftUI
 
 extension Color {

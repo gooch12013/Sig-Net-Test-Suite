@@ -1,3 +1,4 @@
+import SigNet
 import SwiftUI
 
 /// Everything learned about each RDM fixture, kept across tab switches.

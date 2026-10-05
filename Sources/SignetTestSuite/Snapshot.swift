@@ -1,4 +1,5 @@
 import AppKit
+import SigNet
 import SwiftUI
 
 /// Developer aid for looking at the UI without Screen Recording permission:

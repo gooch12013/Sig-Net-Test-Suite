@@ -1,5 +1,6 @@
 import CSignet
 import Foundation
+import SigNet
 
 /// End-to-end Transmitter -> Receiver loopback checks for --selftest. Each check
 /// uses its own universes (101+) and stops everything before returning.

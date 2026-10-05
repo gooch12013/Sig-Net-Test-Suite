@@ -298,7 +298,7 @@ final class FTCResponder {
 
 extension FirmwareUpdate {
     /// Drives the controller against `FTCResponder`. Prints one line per failed check; true when all pass.
-    static func selfTestFTC() -> Bool {
+    public static func selfTestFTC() -> Bool {
         var ok = true
         func check(_ name: String, _ cond: Bool, _ detail: @autoclosure () -> String = "") {
             if !cond { ok = false; print("  FTC \(name): FAIL \(detail())") }

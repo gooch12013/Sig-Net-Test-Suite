@@ -1,4 +1,5 @@
 import CSignet
+import SigNet
 import SwiftUI
 
 /// Receive Debug: the one place on this tab with counters, drop reasons, packet hex and the library log.

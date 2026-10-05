@@ -1,4 +1,5 @@
 import CSignet
+import SigNet
 import SwiftUI
 
 /// A complete, discoverable Sig-Net Node: a fake fixture with N virtual

@@ -1,3 +1,4 @@
+import SigNet
 import SwiftUI
 
 /// Parameters: one module for the device, one for its network, one per port.

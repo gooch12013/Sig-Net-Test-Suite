@@ -1,4 +1,5 @@
 import AppKit
+import SigNet
 import SwiftUI
 
 /// Firmware and files of one RDM fixture (ANSI E1.37-4), shown when the fixture lists FTC_INITIATE.

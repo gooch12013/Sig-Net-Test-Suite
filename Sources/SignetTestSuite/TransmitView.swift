@@ -1,3 +1,4 @@
+import SigNet
 import SwiftUI
 
 /// Transmit: a control strip, four modules of local settings, then the channel fader bank.

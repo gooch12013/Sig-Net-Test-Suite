@@ -1,5 +1,6 @@
 import CSignet
 import Foundation
+import SigNet
 import SwiftUI
 
 /// A data-plane-only Sig-Net Node (no device_info, so no discovery, no

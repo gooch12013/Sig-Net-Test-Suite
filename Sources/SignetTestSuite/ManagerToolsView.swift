@@ -1,3 +1,4 @@
+import SigNet
 import SwiftUI
 
 /// Debug: the one place protocol codes, hex and packets appear.

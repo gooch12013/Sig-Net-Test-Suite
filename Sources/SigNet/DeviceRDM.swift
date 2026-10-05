@@ -3,20 +3,22 @@ import Foundation
 /// Virtual E1.20 responder behind one virtual endpoint (PF §6.8.2: the Node
 /// terminates RDM itself). Pure frames-in/frames-out, so the self-test can
 /// drive it without a network.
-struct DeviceRDMResponder {
-    static let modelID: UInt16 = 0x0001 // also the SoemCode variant (PF §6.5 recommends they match)
-    static let softwareID: UInt32 = 0x0001_0000
+public struct DeviceRDMResponder {
+    public static let modelID: UInt16 = 0x0001 // also the SoemCode variant (PF §6.5 recommends they match)
+    public static let softwareID: UInt32 = 0x0001_0000
     static let footprint: UInt16 = 8
 
-    let uid: [UInt8]
+    public let uid: [UInt8]
     var label: String
     let softwareLabel: String
-    var identify = false
+    public var identify = false
     var startAddress: UInt16 = 1
+
+    public init(uid: [UInt8], label: String, softwareLabel: String) { self.uid = uid; self.label = label; self.softwareLabel = softwareLabel }
 
     /// The response to `req`, or nil when E1.20 says stay silent: bad frame,
     /// someone else's UID, a broadcast, or a non-GET/SET class.
-    mutating func handle(_ req: [UInt8]) -> [UInt8]? {
+    public mutating func handle(_ req: [UInt8]) -> [UInt8]? {
         guard Self.valid(req) else { return nil }
         let dest = Array(req[3..<9])
         let broadcast = dest[2...] == [0xFF, 0xFF, 0xFF, 0xFF] && (dest[..<2] == [0xFF, 0xFF] || dest[..<2] == uid[..<2])
@@ -69,7 +71,7 @@ struct DeviceRDMResponder {
 
     /// PF §10.5.2: a state change is followed by an unsolicited
     /// GET_COMMAND_RESPONSE, broadcast, so every Manager's cache follows.
-    mutating func notification(after reply: [UInt8]) -> [UInt8]? {
+    public mutating func notification(after reply: [UInt8]) -> [UInt8]? {
         guard reply.count >= 26, reply[20] == 0x31, reply[16] == 0x00 else { return nil }
         let get = Self.frame(dest: uid, src: [UInt8](repeating: 0xFF, count: 6), tn: 0, type: 1, sub: (0, 0),
                              cc: 0x20, pid: UInt16(reply[21]) << 8 | UInt16(reply[22]), pd: [])
@@ -91,7 +93,7 @@ struct DeviceRDMResponder {
               cc: req[20] + 1, pid: UInt16(req[21]) << 8 | UInt16(req[22]), pd: pd)
     }
 
-    static func nack(_ req: [UInt8], from uid: [UInt8], reason: UInt16) -> [UInt8] {
+    public static func nack(_ req: [UInt8], from uid: [UInt8], reason: UInt16) -> [UInt8] {
         response(to: req, from: uid, type: 0x02, pd: be(reason))
     }
 
@@ -112,7 +114,7 @@ struct DeviceRDMResponder {
     ]
 
     /// One log line: "GET DEVICE_INFO (0x0060) PDL 0", "GET_RESPONSE … ACK PDL 19 …".
-    static func describe(_ f: [UInt8]) -> String {
+    public static func describe(_ f: [UInt8]) -> String {
         guard f.count >= 24 else { return "short frame (\(f.count) bytes)" }
         let classes: [UInt8: String] = [0x20: "GET", 0x21: "GET_RESPONSE", 0x30: "SET", 0x31: "SET_RESPONSE"]
         let pid = UInt16(f[21]) << 8 | UInt16(f[22])
