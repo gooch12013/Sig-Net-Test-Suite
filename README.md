@@ -77,13 +77,15 @@ traffic through multicast loopback, which is how the self-test works.
 
 Sig-Net uses UDP port 5683. Levels for universe *n* go to
 `239.254.0.((n-1) % 109 + 1)`. Control traffic uses `239.254.255.248` to `.255`.
-Allow this traffic through the macOS firewall. The Manager tab has an interface
-field for Macs with more than one network.
+Allow this traffic through the macOS firewall. On a Mac with more than one
+network, pick the interface from the NIC menu in the top strip. Transmit,
+Receive, Device and Manager all use it, and the app remembers it between
+launches. Like the security settings, it locks while any role is running.
 
 ## Self-test
 
 ```sh
-swift run SignetTestSuite --selftest
+swift run SignetTestSuite --selftest [--interface <local IPv4>]
 ```
 
 Runs every part against the others inside one process, in Open and Secure Mode,

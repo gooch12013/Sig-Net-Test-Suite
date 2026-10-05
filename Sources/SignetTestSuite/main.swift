@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 let settings = SecuritySettings()
+settings.interface = UserDefaults.standard.string(forKey: "interface") ?? "" // GUI only; selftest/probe start from the OS default
 let transmitter = Transmitter(settings: settings)
 let receiver = Receiver(settings: settings)
 let fakeDevice = FakeDevice(settings: settings)
@@ -24,6 +25,7 @@ func selfTest() -> Int32 {
         let s = SecuritySettings()
         s.mode = mode
         s.passphrase = "Sig-Net-Test-9"
+        s.interface = Snapshot.arg("--interface") ?? ""
         let tag = mode.rawValue.lowercased()
 
         for run in 1...2 { // second Secure run reloads the saved session record

@@ -14,6 +14,8 @@ final class SecuritySettings: ObservableObject {
     @Published var mode: SecurityMode = .open
     @Published var passphrase = ""
     @Published var scope = "local"
+    /// IPv4 address of the NIC every device uses; empty = OS default.
+    @Published var interface = ""
     @Published private(set) var activeDevices = 0
 
     var scopeOrDefault: String { scope.isEmpty ? "local" : scope }
@@ -52,6 +54,28 @@ final class SecuritySettings: ObservableObject {
         return k0
     }
 }
+
+extension SecuritySettings {
+    /// The chosen NIC for signet configs' multicast_interface; nil = OS default.
+    func interfaceAddress() throws -> signet_address_t? {
+        guard !interface.isEmpty else { return nil }
+        var a = signet_address_t()
+        a.family = UInt8(SIGNET_AF_IPV4.rawValue)
+        guard withUnsafeMutableBytes(of: &a.bytes, { inet_pton(AF_INET, interface, $0.baseAddress) }) == 1 else {
+            throw InterfaceError(description: "Interface must be an IPv4 address")
+        }
+        return a
+    }
+
+    /// Calls `body` with the chosen NIC, nil = OS default. Only valid inside
+    /// `body`; signet_device_create copies the address.
+    func withInterface<R>(_ body: (UnsafePointer<signet_address_t>?) -> R) throws -> R {
+        guard var a = try interfaceAddress() else { return body(nil) }
+        return withUnsafePointer(to: &a, body)
+    }
+}
+
+struct InterfaceError: Error, CustomStringConvertible { let description: String }
 
 struct SignetError: Error, CustomStringConvertible {
     let description: String

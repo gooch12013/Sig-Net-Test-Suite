@@ -206,6 +206,7 @@ final class FakeDevice: ObservableObject {
         cfg.network_handler = UnsafePointer(keep([network]))
         cfg.endpoint_patches = UnsafePointer(keep(patches))
         cfg.endpoint_patch_count = n
+        cfg.multicast_interface = try settings.interfaceAddress().map { UnsafePointer(keep([$0])) }
         // App uptime is not physical power-on: keep the §7.7.1 window shut unless asked.
         cfg.power_on_elapsed_s = freshPowerOn ? 0 : 300
 

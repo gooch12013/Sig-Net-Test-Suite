@@ -106,6 +106,9 @@ struct SecurityPanel: View {
                     .textFieldStyle(.plain).font(.system(size: 13, design: .monospaced)).foregroundStyle(Color.ink)
             }
             .frame(width: 110)
+            Silkscreen("NIC")
+            InterfaceMenu(settings: settings)
+                .onChange(of: settings.interface) { UserDefaults.standard.set($0, forKey: "interface") }
             if settings.locked {
                 Image(systemName: "lock.fill").foregroundStyle(Color.silk)
                     .help("Stop every running device to change security settings")

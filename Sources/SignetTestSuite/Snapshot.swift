@@ -25,7 +25,7 @@ enum Snapshot {
         }
         if let p = arg("--passphrase") { settings.mode = .secure; settings.passphrase = p }
         if let s = arg("--scope") { settings.scope = s }
-        if let i = arg("--interface") { manager.interface = i }
+        if let i = arg("--interface") { settings.interface = i }
         if args.contains("--start-manager") { DispatchQueue.main.async { manager.start() } }
         guard let path = arg("--snapshot") else { return }
         let delay = Double(arg("--after") ?? "6") ?? 6

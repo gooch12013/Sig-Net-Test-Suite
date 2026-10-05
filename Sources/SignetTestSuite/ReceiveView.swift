@@ -96,23 +96,26 @@ final class Receiver: ObservableObject {
         cfg.frame_tap_depth = 16 // only for an accurate fps: the 20 Hz UI poll would undercount a 44 Hz stream
         // No persistence: the header requires it only with device_info.
 
-        let err = universes.withUnsafeBufferPointer { uPtr in
-            previewUniverses.withUnsafeBufferPointer { pPtr in
-                k0.withUnsafeMutableBufferPointer { keyPtr in
-                    cfg.universes = uPtr.baseAddress
-                    cfg.universe_count = uPtr.count
-                    cfg.preview_universes = pPtr.isEmpty ? nil : pPtr.baseAddress
-                    cfg.preview_universe_count = pPtr.count
-                    if secure {
-                        cfg.root_key = keyPtr.baseAddress // wiped by signet_device_create
-                        cfg.root_key_len = keyPtr.count
-                    }
-                    return withUnsafePointer(to: &cfg) { cfgPtr in
-                        var deviceCfg = signet_device_config_t()
-                        deviceCfg.struct_size = MemoryLayout<signet_device_config_t>.size
-                        deviceCfg.roles = SIGNET_DEVICE_ROLE_NODE.rawValue
-                        deviceCfg.node = cfgPtr
-                        return signet_device_create(&deviceCfg, &device)
+        let err = try settings.withInterface { nic in
+            cfg.multicast_interface = nic
+            return universes.withUnsafeBufferPointer { uPtr in
+                previewUniverses.withUnsafeBufferPointer { pPtr in
+                    k0.withUnsafeMutableBufferPointer { keyPtr in
+                        cfg.universes = uPtr.baseAddress
+                        cfg.universe_count = uPtr.count
+                        cfg.preview_universes = pPtr.isEmpty ? nil : pPtr.baseAddress
+                        cfg.preview_universe_count = pPtr.count
+                        if secure {
+                            cfg.root_key = keyPtr.baseAddress // wiped by signet_device_create
+                            cfg.root_key_len = keyPtr.count
+                        }
+                        return withUnsafePointer(to: &cfg) { cfgPtr in
+                            var deviceCfg = signet_device_config_t()
+                            deviceCfg.struct_size = MemoryLayout<signet_device_config_t>.size
+                            deviceCfg.roles = SIGNET_DEVICE_ROLE_NODE.rawValue
+                            deviceCfg.node = cfgPtr
+                            return signet_device_create(&deviceCfg, &device)
+                        }
                     }
                 }
             }

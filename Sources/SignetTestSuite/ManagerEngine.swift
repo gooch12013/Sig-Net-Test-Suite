@@ -92,7 +92,6 @@ final class Manager: ObservableObject {
     @Published private(set) var busy = false
     @Published var heartbeat = true
     @Published var unicast = true
-    @Published var interface = "" // IPv4 address of the NIC; empty = system default
 
     private var fd: Int32 = -1
     private var source: DispatchSourceRead?
@@ -190,6 +189,7 @@ final class Manager: ObservableObject {
         setsockopt(fd, IPPROTO_IP, IP_MULTICAST_LOOP, &loop, 1)
         _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
         var nic = in_addr(s_addr: INADDR_ANY)
+        let interface = settings.interface
         if !interface.isEmpty {
             guard inet_pton(AF_INET, interface, &nic) == 1 else { throw ManagerError("Interface must be an IPv4 address") }
             setsockopt(fd, IPPROTO_IP, IP_MULTICAST_IF, &nic, socklen_t(MemoryLayout<in_addr>.size))

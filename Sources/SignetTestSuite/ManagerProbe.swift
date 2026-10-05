@@ -14,17 +14,17 @@ extension Manager {
         let s = SecuritySettings()
         if let p = arg("--passphrase") { s.mode = .secure; s.passphrase = p } else { s.mode = .open }
         s.scope = arg("--scope") ?? "local"
+        s.interface = arg("--interface") ?? ""
         guard s.ready else { print("passphrase rejected: \(s.passphraseProblem ?? "")"); return 2 }
 
         // Own TUID: sharing the GUI Manager's TUID would collide on session/seq and get one of them dropped as replay.
         let m = Manager(settings: s, tuid: Identity.tuid("probe"))
         m.heartbeat = false
         m.unicast = true
-        m.interface = arg("--interface") ?? ""
         m.start()
         guard m.running else { print("manager start failed: \(m.status)"); return 1 }
         defer { m.stop() }
-        print("Manager \(Identity.hex(m.tuid)) · \(s.mode.rawValue) · scope \(s.scopeOrDefault) · iface \(m.interface.isEmpty ? "default" : m.interface)")
+        print("Manager \(Identity.hex(m.tuid)) · \(s.mode.rawValue) · scope \(s.scopeOrDefault) · iface \(s.interface.isEmpty ? "default" : s.interface)")
         print("Node \(nodeHex) @ \(ip)\n")
 
         // Replies from the node logged since `mark`, as "auth · TIDs".

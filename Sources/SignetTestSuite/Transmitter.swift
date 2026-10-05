@@ -98,23 +98,26 @@ final class Transmitter: ObservableObject {
         cfg.governed_count = governed.count
         cfg.max_fps = UInt16(clamping: maxFps)
 
-        let err = withUnsafePointer(to: &persistence) { persistencePtr in
-            withUnsafePointer(to: &endpoint) { endpointPtr in
-                governed.withUnsafeBufferPointer { governedPtr in
-                    k0.withUnsafeMutableBufferPointer { keyPtr in
-                        cfg.endpoints = endpointPtr
-                        cfg.governed = governedPtr.baseAddress
-                        if secure {
-                            cfg.persistence = persistencePtr // session-ID record, required in Secure Mode
-                            cfg.root_key = keyPtr.baseAddress // wiped by signet_device_create
-                            cfg.root_key_len = keyPtr.count
-                        }
-                        return withUnsafePointer(to: &cfg) { cfgPtr in
-                            var deviceCfg = signet_device_config_t()
-                            deviceCfg.struct_size = MemoryLayout<signet_device_config_t>.size
-                            deviceCfg.roles = SIGNET_DEVICE_ROLE_SENDER.rawValue
-                            deviceCfg.sender = cfgPtr
-                            return signet_device_create(&deviceCfg, &device)
+        let err = try settings.withInterface { nic in
+            cfg.multicast_interface = nic
+            return withUnsafePointer(to: &persistence) { persistencePtr in
+                withUnsafePointer(to: &endpoint) { endpointPtr in
+                    governed.withUnsafeBufferPointer { governedPtr in
+                        k0.withUnsafeMutableBufferPointer { keyPtr in
+                            cfg.endpoints = endpointPtr
+                            cfg.governed = governedPtr.baseAddress
+                            if secure {
+                                cfg.persistence = persistencePtr // session-ID record, required in Secure Mode
+                                cfg.root_key = keyPtr.baseAddress // wiped by signet_device_create
+                                cfg.root_key_len = keyPtr.count
+                            }
+                            return withUnsafePointer(to: &cfg) { cfgPtr in
+                                var deviceCfg = signet_device_config_t()
+                                deviceCfg.struct_size = MemoryLayout<signet_device_config_t>.size
+                                deviceCfg.roles = SIGNET_DEVICE_ROLE_SENDER.rawValue
+                                deviceCfg.sender = cfgPtr
+                                return signet_device_create(&deviceCfg, &device)
+                            }
                         }
                     }
                 }

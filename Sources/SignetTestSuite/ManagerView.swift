@@ -53,7 +53,6 @@ struct ManagerView: View {
                 Button("Start Manager") { manager.start() }
                     .buttonStyle(SoftKeyStyle(prominent: true))
                     .disabled(!settings.ready)
-                ManagerInterfaceMenu(manager: manager)
             }
             Button("Find devices") { manager.poll(level: 2, ep: 0xFFFF) }
                 .buttonStyle(.softKey)
@@ -137,21 +136,22 @@ func lampColor(_ d: ManagerDevice) -> Color {
 }
 
 /// Network interface menu; "Automatic" leaves multicast routing to the OS.
-private struct ManagerInterfaceMenu: View {
-    @ObservedObject var manager: Manager
-    private let interfaces = localIPv4Interfaces()
+struct InterfaceMenu: View {
+    @ObservedObject var settings: SecuritySettings
+    @State private var interfaces = localIPv4Interfaces()
 
     var body: some View {
-        Picker("Network", selection: $manager.interface) {
+        Picker("Network", selection: $settings.interface) {
             Text("Automatic").tag("")
             ForEach(interfaces, id: \.ip) { Text("\($0.name)  \($0.ip)").tag($0.ip) }
-            if !manager.interface.isEmpty, !interfaces.contains(where: { $0.ip == manager.interface }) {
-                Text(manager.interface).tag(manager.interface)
+            if !settings.interface.isEmpty, !interfaces.contains(where: { $0.ip == settings.interface }) {
+                Text("\(settings.interface) (not found)").tag(settings.interface)
             }
         }
         .labelsHidden()
         .frame(maxWidth: 200)
-        .help("The network the devices are on")
+        .help("Network interface every device sends and joins multicast on")
+        .onHover { if $0 { interfaces = localIPv4Interfaces() } } // pick up NICs plugged in after launch
     }
 }
 
