@@ -1,4 +1,4 @@
-# Sig-Net test suite for macOS
+# Sig-Net test suite
 
 ![Sig-Net](Sources/SignetTestSuite/Resources/SigNetLogo.png)
 
@@ -13,33 +13,27 @@ Mode, so it can test consoles, fixtures and other Managers.
 | Device | Complete Node | A fake fixture that Managers can discover and configure: parameter store with transactions, two proprietary TIDs, a virtual RDM responder per endpoint, offboard and network-change handlers that only log |
 | Manager | Manager | Finds devices and lists them by name. Per device: an overview (identity, connection, health, security events), a settings form with each port's live values and inline editing, RDM fixtures by name (identify, label, start address), filtered traffic, and raw TID/PID tools. Poll options are under Advanced |
 
-Transmit, Receive and Device use the Sig-Net C library. The library has no
-Manager role, so the Manager is written in Swift from the spec, using CryptoKit
-for HMAC-SHA256 and HKDF. Its packets were checked byte for byte against the
-spec's test vectors and against the library's own decoder.
+Every role is written in Swift from the spec (*Sig-Net Protocol Framework
+V1.10*), using swift-crypto for HMAC-SHA256 and HKDF. Packets are checked byte
+for byte against the spec's test vectors. The protocol code lives in the
+portable `SigNet` module, which also builds a command-line tool, `sig-net`, for
+Linux and Windows.
 
 SNOW (over-the-wire onboarding) is not implemented. See `docs/snow-summary.md`.
 
 ## Build and run
 
-You need macOS 13 or later, Swift 5.10 or later, CMake 3.29 or later, and a copy
-of the Sig-Net desktop library source (`signet-desktop-src-0.1.0`).
-
-Build the library into `vendor/signet` once:
+There is no library to build. You need Swift 5.10 or later.
 
 ```sh
-scripts/build-signet.sh /path/to/signet-desktop-src-0.1.0
+swift run SignetTestSuite             # the app: macOS 13 or later
+swift run sig-net --selftest          # the CLI: macOS, Linux or Windows
+swift run sig-net --probe --node <TUID> --ip <device IP> [...]
 ```
 
-Then run the app:
-
-```sh
-swift run SignetTestSuite
-```
-
-To use a library installed somewhere else, set `SIGNET_PREFIX` to its install
-prefix. The linker warns that the dylib targets a newer macOS than the package.
-The warning is harmless.
+The app is macOS-only (SwiftUI). On Linux and Windows the package builds just
+`SigNet` and `sig-net`. CI (`.github/workflows/build.yml`) builds and self-tests
+on all three on every push and pull request.
 
 ## Security settings
 
@@ -53,11 +47,12 @@ The panel names the failing rule as you type. Peers must use the same
 passphrase and scope.
 
 Each part keeps its own device ID (TUID), generated once in ESTA's prototyping
-range (`0x7FF0`) and saved in user defaults. Secure Mode session records are
-saved in `~/Library/Application Support/SignetTestSuite/state/`. Don't delete
-that folder casually: the library can refuse to start Secure Mode for a device
-whose record is missing. The Manager keeps its session counter in user
-defaults.
+range (`0x7FF0`) and saved in user defaults with its Secure Mode session
+counter. The Sender, Device and Manager got new TUIDs when the app moved off the
+C library (roles `sender-v2`, `device-v2`, `manager-v2`): the library's session
+records could not be carried over, so Nodes that had seen the old TUIDs would
+have rejected the new session counters as replays. Self-tests use their own
+`selftest-*` roles and never touch these.
 
 ## Testing your equipment
 
@@ -85,24 +80,32 @@ launches. Like the security settings, it locks while any role is running.
 ## Self-test
 
 ```sh
-swift run SignetTestSuite --selftest [--interface <local IPv4>]
+swift run sig-net --selftest [--offline] [--interface <local IPv4>]
+swift run SignetTestSuite --selftest [--interface <local IPv4>]   # same checks
 ```
 
-Runs every part against the others inside one process, in Open and Secure Mode,
-and exits non-zero on any failure. It takes about 20 seconds. It checks:
+Both run one shared list (`Sources/SigNet/SelfTest.swift`) and exit non-zero on
+any failure. It takes about 30 seconds. Offline checks, which need no network:
 
 - Timecode frame counting, including drop-frame rates.
-- The Transmitter starting and restarting (Secure restart reloads the session record).
-- Levels from the Transmitter arriving at the Receiver.
-- The fake Device booting twice, plus its RDM responder on hand-built frames.
-- The Manager: spec test vectors, then discovering the fake Device, GET/SET of its label, refusal detection, Table of Devices and RDM DEVICE_INFO, and (Secure) rejection of a wrong passphrase.
 - RDM file transfer (ANSI E1.37-4): the controller against a strict Responder emulator on a virtual clock, covering uploads, test mode, damaged packets, cancels, multi-file lists, bootloader switches and downloads. The emulator counts every request that breaks the standard.
-- Multiple universes, priority merging, sync, timecode, preview, and (Secure) rejection of an Open-Mode sender and of a wrong passphrase.
+- Spec test vectors (Appendix G keys and HMACs) for the Manager, Sender and Receiver, the Receiver's parse path for every drop reason, and the Device's RDM responder on hand-built frames.
+
+Then, in Open and Secure Mode, over multicast loopback inside one process:
+
+- The Sender heard by a plain socket: signatures, sequence numbers, priority, sync, timecode, on-boot announce and TID_UNIVERSE.
+- The Device booting twice (the second boot bumps the persisted Session ID).
+- The Manager discovering another Manager, then the Device: GET/SET of its label, refusal detection, Table of Devices, RDM DEVICE_INFO and (Secure) rejection of a wrong passphrase.
+- Sender to Receiver: multiple universes, priority merging, sync, timecode, preview, and (Secure) rejection of an Open-Mode Sender and of a wrong passphrase.
+
+`--offline` stops after the offline checks. CI uses it on Linux and Windows,
+where hosted runners don't reliably loop multicast back, and runs the full list
+on macOS.
 
 ## Probing a real device
 
 ```sh
-swift run SignetTestSuite --probe --node <TUID> --ip <device IP> [--interface <local IP>] [--passphrase <p>] [--scope <s>] [--rdm-uid <UID>]
+swift run sig-net --probe --node <TUID> --ip <device IP> [--interface <local IP>] [--passphrase <p>] [--scope <s>] [--rdm-uid <UID>]
 ```
 
 Runs the Manager tab's code against one real Node and prints a line per item:
@@ -113,47 +116,45 @@ DEVICE_INFO, labels, SLOT_INFO, SLOT_DESCRIPTION 0-10, IDENTIFY on and off).
 Every SET is put back afterwards. It never sends offboard, reboot or network
 SETs. Omit `--passphrase` for Open Mode. It takes about 2.5 minutes.
 
-## Findings so far
+## Notes on the reference C library
 
-Differences between the library and the spec. Details are in
-`docs/manager-semantics.md`.
+Earlier versions of this app used the Sig-Net desktop C library. Where it
+differs from the spec, gear built on it may behave the same way:
 
-Seen on the wire, while the Swift Manager tested the fake Device:
+- Its Sender sends no on-boot announce (§10.2.5) and no TID_UNIVERSE (§11.2.6), and doesn't resend paused timecode at 1 Hz (§10.8.1).
+- Its timecode shares the levels' Sender endpoint and sequence numbers instead of its own lane (§8.6.2).
+- Its Message IDs start at 0, which skips the Open Mode duplicate filter.
+- Its Node applies SET transactions that mix in unsupported TIDs (EP_FAILOVER, EP_PROTOCOL, EP_DMX_TIMING) instead of rejecting the whole transaction (§10.1.3), and has no 2-second post-boot SET window (§8.6.4).
+- Its Node reports RT_ROLE_CAPABILITY 0x01 in Secure Mode, gives no reply to GET DG_SECURITY_EVENT, and accepts NW_* TIDs only as SETs.
+- Its Node answers proprietary TIDs when the request's Mfg-Code is 0, and its `source_count` counts only senders that win at least one slot.
 
-- Proprietary TIDs are answered when the request's Mfg-Code is 0. The spec says they should only be read when the Mfg-Code matches.
-- `source_count` counts only senders that win at least one slot, not every sender received.
+Spec ambiguities worth knowing when testing gear:
 
-Found by reading the library source, not yet tested:
+- Slots a TID_PRIORITY doesn't cover: §10.6 says priority 0 (not driven), §11.2.2 says 100. This app uses 0.
+- §8.6.2 gives each universe its own Sender endpoint, but §10.7.2 matches a single TID_SYNC by Sender-ID. This app's Sender puts all its universes on endpoint 1 so one sync covers them.
+- The preview path: §11.2.3 and Appendix A disagree on `{universe}` versus `{stream}`.
 
-- RDM responses can be delayed up to 1000 ms; the spec says 250 ms.
-- RDM discovery commands are not filtered out of the tunnel.
-- There is no 2 second post-boot lockout on SET (spec section 8.6.4).
+More on the library's Manager-facing behaviour is in `docs/manager-semantics.md`.
 
 ## Not implemented yet
 
 - SNOW onboarding.
 - Manager: suspending its own polling when another Manager is polling, answering other Managers' polls, network-change rollback, offboard and reboot buttons (they can be sent as raw SETs), multi-TID transactions, and RDM flow control.
-- Saving the fake Device's parameter values across restarts.
-- Fake Device RDM flow control: it never calls `signet_context_set_rdm_flow`, so it reports 0 of 0 slots available and its RDM responses carry no flow-control TLV.
-- Fake Device network parameters: it installs a network handler, so `RT_SUPPORTED_TIDS` lists the network TIDs, but its parameter store never answers GETs for them.
 
 ## Files
 
 | Path | Purpose |
 | --- | --- |
-| `Package.swift` | Swift package; points the compiler and linker at `vendor/signet` |
-| `scripts/build-signet.sh` | Builds the library into `vendor/signet` |
-| `Sources/CSignet/` | Module map that exposes `signet.h` to Swift |
-| `Sources/SignetTestSuite/Signet.swift` | Shared security settings, key derivation, device IDs, file persistence |
-| `Transmitter.swift`, `TransmitView.swift` | Transmit tab |
-| `ReceiveView.swift` | Receive tab |
-| `DeviceView.swift`, `DeviceRDM.swift` | Device tab and its RDM responder |
-| `Manager*.swift` | Manager: codec and keys, engine, TID catalogue, self-test, `--probe`; screens split into overview/traffic (`ManagerView`), settings, fixtures and tools, with plain-language labels in `ManagerLabels` |
-| `FTC.swift`, `FirmwareUpdate.swift`, `ManagerFirmwareView.swift` | RDM file transfer (ANSI E1.37-4): the standard's constants and CRC, the controller, and the firmware and files screen. Written from the standard |
-| `FirmwareSelfTest.swift` | Strict E1.37-4 Responder emulator and the file-transfer self-test |
+| `Package.swift` | Swift package: `SigNet` and `sig-net` everywhere, the app on macOS only |
+| `.github/workflows/build.yml` | CI: macOS, Linux and Windows |
+| `Sources/SigNet/` | Portable protocol module (Foundation, Dispatch, swift-crypto) |
+| `TransmitterEngine.swift`, `ReceiverEngine.swift`, `DeviceEngine.swift`, `DeviceRDM.swift`, `ManagerEngine.swift` | The Sender, the data-plane Node, the complete Node with its RDM responder, and the Manager |
+| `Manager*.swift`, `SigNetKeys.swift`, `Security.swift`, `UDPSocket.swift`, `Timecode.swift` | Codec, keys and HMAC, TID catalogue and labels, `--probe`, security settings and TUIDs, multicast socket, timecode |
+| `FTC.swift`, `FirmwareUpdate.swift`, `FirmwareSelfTest.swift` | RDM file transfer (ANSI E1.37-4): constants and CRC, the controller, a strict Responder emulator and its self-test |
+| `SelfTest.swift` | The `--selftest` list shared by both front-ends, including the Sender-to-Receiver loopback checks |
+| `Sources/sig-net/main.swift` | The CLI |
+| `Sources/SignetTestSuite/` | The macOS app: one SwiftUI view per tab (`TransmitView`, `ReceiveView`, `DeviceView`, `Manager*View`), `AppView` and `main.swift` for the window and security panel, `Signet.swift` and `Transmitter.swift` for the observable engine wrappers |
 | `Snapshot.swift` | Developer aid: `--snapshot out.png` renders the window off-screen (no Screen Recording permission needed) |
-| `LoopbackTests.swift` | Combined send/receive checks |
-| `AppView.swift`, `main.swift` | Window, security panel, app entry point and `--selftest` |
 | `docs/manager-wire.md` | Packet format, keys and HMAC, with test vectors |
 | `docs/manager-semantics.md` | Discovery, GET/SET, RDM, TID catalogue, timing, spec-vs-library notes |
 | `docs/snow-summary.md` | SNOW scope and why it is deferred |
@@ -174,12 +175,11 @@ the license and its `Required Notice` line crediting the author.
 
 The license does not cover the Sig-Net® name or logo
 (`Sources/SignetTestSuite/Resources/SigNetLogo.png`), which belong to their
-owner, or the Sig-Net C library, which is not in this repo and has its own
-terms.
+owner.
 
-The app links the Sig-Net desktop library (`signet-desktop-src-0.1.0`). Its
-README states no license, so check its terms with Singularity (UK) Ltd before
-sharing a packaged `.app`, which includes the library. The separate public
+The app no longer uses the Sig-Net desktop C library
+(`signet-desktop-src-0.1.0`), whose README states no license; nothing from it
+is in this repo or in a packaged `.app`. The separate public
 [Sig-Net SDK](https://github.com/WayneHowell/public-sig-net-sdk) (C++ for
 Windows, not used here) is MIT-licensed, copyright Singularity (UK) Ltd, per
 the header of each source file.

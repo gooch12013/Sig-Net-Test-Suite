@@ -1,0 +1,29 @@
+name: build
+on: [push, pull_request]
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - run: swift build
+      - run: swift run sig-net --selftest # full list: multicast loopback works on macOS runners
+
+  linux:
+    runs-on: ubuntu-latest
+    container: swift:6.4
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - run: swift build --product sig-net
+      - run: swift run sig-net --selftest --offline # hosted runners don't reliably loop multicast back
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: compnerd/gha-setup-swift@v0.5.0
+        with:
+          swift-version: swift-6.4.0-release
+          swift-build: 6.4.0-RELEASE
+      - uses: actions/checkout@v7.0.1
+      - run: swift build --product sig-net
+      - run: swift run sig-net --selftest --offline

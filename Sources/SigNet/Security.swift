@@ -113,10 +113,10 @@ public func wipe(_ bytes: inout [UInt8]) {
 }
 
 public enum Identity {
-    /// One persisted TUID per role ("sender", "receiver", "device", "manager"),
+    /// One persisted TUID per role ("sender-v2", "receiver", "device-v2", "manager-v2"),
     /// so each device keeps its identity and Secure-Mode session record across
-    /// launches. 0x7FF0 is ESTA's prototyping manufacturer ID; the Device ID is
-    /// in the dynamic (software) range.
+    /// launches ("-v2": the C library's session records could not be carried over).
+    /// 0x7FF0 is ESTA's prototyping manufacturer ID; the Device ID is in the dynamic (software) range.
     public static func tuid(_ role: String) -> [UInt8] {
         let key = "tuid.\(role)"
         let defaults = UserDefaults.standard

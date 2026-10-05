@@ -60,7 +60,7 @@ open class DeviceEngine {
     private var network: (old: [UInt32: [UInt8]], deadline: Date)?
     private let launched = Date()
 
-    public init(settings: SecurityConfig, tuid: [UInt8] = Identity.tuid("device")) {
+    public init(settings: SecurityConfig, tuid: [UInt8] = Identity.tuid("device-v2")) {
         self.settings = settings
         self.tuid = tuid
     }
@@ -706,9 +706,8 @@ private struct Freshness {
 // MARK: - Self-test
 
 extension DeviceEngine {
-    /// Hand-built RDM frames, then two boots (the second must load and bump the persisted Session ID). nil = pass.
+    /// Two boots: the second must load and bump the persisted Session ID. nil = pass.
     public static func selfTest(settings: SecurityConfig) -> String? {
-        if let problem = rdmSelfTest() { return "rdm: \(problem)" }
         let d = DeviceEngine(settings: settings, tuid: Identity.tuid("selftest-device"))
         var last: UInt32 = 0
         for run in 1...2 {

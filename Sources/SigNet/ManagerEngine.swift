@@ -123,7 +123,7 @@ open class ManagerEngine {
         let done: (ManagerResult) -> Void
     }
 
-    public init(settings: SecurityConfig, tuid: [UInt8] = Identity.tuid("manager")) {
+    public init(settings: SecurityConfig, tuid: [UInt8] = Identity.tuid("manager-v2")) {
         self.settings = settings
         self.tuid = tuid
     }

@@ -11,14 +11,11 @@ scripts/make-app.sh --install   # same, then copies it to /Applications
 ## What the script does
 
 1. Runs `swift build -c release`.
-2. Creates the bundle: the binary in `Contents/MacOS`, `SigNetLogo.png` in
-   `Contents/Resources`, and `libsignet.dylib` in `Contents/Frameworks`.
-   The library comes from `vendor/signet`, or `SIGNET_PREFIX` if set.
-3. Adds an `@executable_path/../Frameworks` rpath so the binary finds the
-   bundled library instead of the one in the project folder.
-4. Writes `Info.plist` with the bundle ID `com.signet.testsuite`, a version
+2. Creates the bundle: the binary in `Contents/MacOS` and `SigNetLogo.png` in
+   `Contents/Resources`. There is nothing else to bundle: the app is pure Swift.
+3. Writes `Info.plist` with the bundle ID `com.signet.testsuite`, a version
    taken from git, macOS 13 as the minimum, and `NSLocalNetworkUsageDescription`.
-5. Signs the bundle ad hoc (`codesign --sign -`).
+4. Signs the bundle ad hoc (`codesign --sign -`).
 
 `AppView.swift` looks for the logo in `Bundle.main` before `Bundle.module`.
 SwiftPM's `Bundle.module` expects its resource bundle at the root of the
@@ -42,6 +39,3 @@ answer later, open System Settings → Privacy & Security → Local Network.
   squashed as a square icon. A square mark would need converting to `.icns`
   (`sips` + `iconutil`) and setting as `CFBundleIconFile`.
 - **No auto-update.** After changing the code, run `--install` again.
-- The linker warning that the dylib targets a newer macOS than the package
-  still appears. It's harmless on this Mac, but rebuild the library with a
-  matching deployment target before shipping to older systems.

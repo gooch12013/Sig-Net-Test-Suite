@@ -7,17 +7,14 @@ cd "$(dirname "$0")/.."
 
 NAME="Sig-Net Test Suite"
 APP="build/$NAME.app"
-PREFIX="${SIGNET_PREFIX:-vendor/signet}"
 
 swift build -c release
 BIN="$(swift build -c release --show-bin-path)"
 
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN/SignetTestSuite" "$APP/Contents/MacOS/"
 cp Sources/SignetTestSuite/Resources/SigNetLogo.png "$APP/Contents/Resources/"
-cp "$PREFIX/lib/libsignet.dylib" "$APP/Contents/Frameworks/"
-install_name_tool -add_rpath @executable_path/../Frameworks "$APP/Contents/MacOS/SignetTestSuite"
 
 cat > "$APP/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -37,7 +34,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
 EOF
 
 # Ad-hoc signature: runs on this Mac. Another Mac needs a Developer ID signature and notarization.
-codesign --force --deep --sign - "$APP"
+codesign --force --sign - "$APP"
 echo "Built $APP"
 
 if [ "${1:-}" = "--install" ]; then

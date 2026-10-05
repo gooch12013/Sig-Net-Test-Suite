@@ -448,6 +448,8 @@ extension ReceiverEngine {
         let ks = SigNetKeys.sender(k0: k0)
         wipe(&k0)
         guard ks.withUnsafeBytes({ mgrHex($0) }) == "23ffd543990f2253c884af7fc6c47255aa1606a4f2f30e082381bb17c9a6c242" else { return "KAT: Ks" }
+        guard (try? parseList("1-4, 10,3", max: 63999, what: "")) == [1, 2, 3, 4, 10], (try? parseList("0", max: 63999, what: "")) == nil,
+              (try? parseList("5-2", max: 63999, what: "")) == nil else { return "universe list parser" }
         guard SigNetKeys.levelGroup(1) == "239.254.0.1", SigNetKeys.levelGroup(109) == "239.254.0.109",
               SigNetKeys.levelGroup(110) == "239.254.0.1", SigNetKeys.levelGroup(63999) == "239.254.0.16" else { return "folding" }
 

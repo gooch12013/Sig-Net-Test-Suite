@@ -8,38 +8,6 @@ final class Receiver: ReceiverEngine, ObservableObject {
     let objectWillChange = ObservableObjectPublisher()
     override func willChange() { objectWillChange.send() }
     var securitySettings: SecuritySettings { settings as! SecuritySettings } // the app only makes Receivers with these
-
-    // MARK: - Self test
-
-    /// In-process loopback: a Transmitter on universe 1 at 77, this Node must see it.
-    static func selfTest(settings: SecuritySettings) -> Bool {
-        func fail(_ why: String) -> Bool { print("  receive: \(why)"); return false }
-        guard (try? parseList("1-4, 10,3", max: 63999, what: "")) == [1, 2, 3, 4, 10],
-              (try? parseList("0", max: 63999, what: "")) == nil,
-              (try? parseList("5-2", max: 63999, what: "")) == nil else { return fail("universe list parser") }
-
-        let rx = Receiver(settings: settings)
-        rx.previewText = "1"
-        rx.start()
-        defer { rx.stop() }
-        guard rx.running else { return fail(rx.status) }
-        let tx = Transmitter(settings: settings)
-        tx.start()
-        defer { tx.stop() }
-        guard tx.running else { return fail(tx.status) }
-        tx.setAll(77)
-
-        let deadline = Date().addingTimeInterval(2)
-        while Date() < deadline {
-            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
-            guard let f = rx.frame, rx.levels[0] == 77 else { continue }
-            guard f.sourceCount >= 1 else { return fail("source count \(f.sourceCount)") }
-            let age = monotonicNs() - f.publishedNs
-            guard (0..<1_000_000_000).contains(age) else { return fail("frame age \(age) ns: clock mismatch") }
-            return true
-        }
-        return fail("no level 77 on universe 1 within 2 s (got \(rx.levels[0]), \(rx.counters.dropsTotal) drops)")
-    }
 }
 
 private func parseList(_ text: String, max: UInt16, what: String) throws -> [UInt16] {

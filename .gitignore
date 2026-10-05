@@ -5,3 +5,4 @@ vendor/
 .impeccable/review/
 .impeccable/questions/
 build/
+.claude/worktrees/

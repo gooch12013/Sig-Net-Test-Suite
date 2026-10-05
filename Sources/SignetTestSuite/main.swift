@@ -2,53 +2,19 @@ import AppKit
 import SigNet
 import SwiftUI
 
+// Before the globals below: a self-test or probe never touches the GUI roles' TUIDs.
+if CommandLine.arguments.contains("--selftest") { exit(SelfTest.run(CommandLine.arguments)) }
+if CommandLine.arguments.contains("--probe") { exit(ManagerEngine.probe(CommandLine.arguments)) }
+
 let settings = SecuritySettings()
 settings.interface = UserDefaults.standard.string(forKey: "interface") ?? "" // GUI only; selftest/probe start from the OS default
 let transmitter = Transmitter(settings: settings)
 let receiver = Receiver(settings: settings)
 let fakeDevice = FakeDevice(settings: settings)
-// Snapshot runs get their own TUID so they never collide with a running GUI Manager on the same node.
 /// What RDM has learned about fixtures; Manager fills it, Transmit labels its faders from it.
 let fixtureStore = FixtureStore()
-let manager = Manager(settings: settings, tuid: Identity.tuid(Snapshot.args.contains("--snapshot") ? "snapshot" : "manager"))
-
-/// `swift run SignetTestSuite --selftest`: exercises every part without the
-/// UI, in both security modes. Exit status 0 = all passed.
-func selfTest() -> Int32 {
-    var failed = false
-    func report(_ label: String, _ ok: Bool, _ detail: String = "") {
-        print("\(ok ? "PASS" : "FAIL") \(label)\(detail.isEmpty ? "" : ": \(detail)")")
-        failed = failed || !ok
-    }
-    report("timecode counter", Timecode.selfTest())
-    report("rdm firmware upload (emulator)", FirmwareUpdate.selfTestFTC())
-    for mode in SecurityMode.allCases {
-        let s = SecuritySettings()
-        s.mode = mode
-        s.passphrase = "Sig-Net-Test-9"
-        s.interface = Snapshot.arg("--interface") ?? ""
-        let tag = mode.rawValue.lowercased()
-
-        for run in 1...2 { // second Secure run reloads the saved session record
-            let tx = Transmitter(settings: s)
-            tx.start()
-            tx.setAll(128)
-            RunLoop.main.run(until: Date().addingTimeInterval(1))
-            report("transmit \(tag) #\(run)", tx.running && tx.sendFailures == 0, tx.status)
-            tx.stop()
-        }
-        report("receive \(tag)", Receiver.selfTest(settings: s))
-        let device = DeviceEngine.selfTest(settings: s)
-        report("device \(tag)", device == nil, device ?? "")
-        let manager = ManagerEngine.knownAnswers() ?? ManagerEngine.deviceLoopTest(settings: s)
-        report("manager \(tag)", manager == nil, manager ?? "")
-        for (l, ok, d) in LoopbackTests.run(settings: s) { report("\(l) \(tag)", ok, d) }
-    }
-    return failed ? 1 : 0
-}
-
-if CommandLine.arguments.contains("--selftest") { exit(selfTest()) }
-if CommandLine.arguments.contains("--probe") { exit(ManagerEngine.probe(CommandLine.arguments)) }
+// Snapshot runs get their own TUID so they never collide with a running GUI Manager on the same node.
+let manager = Manager(settings: settings, tuid: Identity.tuid(Snapshot.args.contains("--snapshot") ? "snapshot" : "manager-v2"))
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_: Notification) {

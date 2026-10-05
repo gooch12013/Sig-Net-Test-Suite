@@ -73,7 +73,7 @@ open class TransmitterEngine {
     private var tcFrozen: (stream: UInt16, value: [UInt8])?, tcSentAt: UInt64 = 0
 
     /// `role` picks the persisted TUID; distinct roles are distinct merge sources.
-    public init(settings: SecurityConfig, role: String = "sender") {
+    public init(settings: SecurityConfig, role: String = "sender-v2") {
         self.settings = settings
         tuid = Identity.tuid(role)
     }
