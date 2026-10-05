@@ -12,6 +12,7 @@ func selfTest() -> Int32 {
     report("timecode counter", Timecode.selfTest() ? nil : "wrong frame label")
     report("rdm firmware upload (emulator)", FirmwareUpdate.selfTestFTC() ? nil : "see above")
     report("manager spec vectors", ManagerEngine.knownAnswers())
+    report("sender spec vectors", TransmitterEngine.knownAnswers())
     let interface = CommandLine.arguments.firstIndex(of: "--interface").flatMap { CommandLine.arguments.dropFirst($0 + 1).first } ?? ""
     for mode in SecurityMode.allCases {
         let s = SecurityConfig()
@@ -19,6 +20,7 @@ func selfTest() -> Int32 {
         s.passphrase = "Sig-Net-Test-9"
         s.interface = interface
         report("manager loop \(mode.rawValue.lowercased())", ManagerEngine.loopTest(settings: s))
+        report("sender loop \(mode.rawValue.lowercased())", TransmitterEngine.loopTest(settings: s))
     }
     return failed ? 1 : 0
 }
