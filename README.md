@@ -96,6 +96,7 @@ and exits non-zero on any failure. It takes about 20 seconds. It checks:
 - Levels from the Transmitter arriving at the Receiver.
 - The fake Device booting twice, plus its RDM responder on hand-built frames.
 - The Manager: spec test vectors, then discovering the fake Device, GET/SET of its label, refusal detection, Table of Devices and RDM DEVICE_INFO, and (Secure) rejection of a wrong passphrase.
+- RDM file transfer (ANSI E1.37-4): the controller against a strict Responder emulator on a virtual clock, covering uploads, test mode, damaged packets, cancels, multi-file lists, bootloader switches and downloads. The emulator counts every request that breaks the standard.
 - Multiple universes, priority merging, sync, timecode, preview, and (Secure) rejection of an Open-Mode sender and of a wrong passphrase.
 
 ## Probing a real device
@@ -148,12 +149,15 @@ Found by reading the library source, not yet tested:
 | `ReceiveView.swift` | Receive tab |
 | `DeviceView.swift`, `DeviceRDM.swift` | Device tab and its RDM responder |
 | `Manager*.swift` | Manager: codec and keys, engine, TID catalogue, self-test, `--probe`; screens split into overview/traffic (`ManagerView`), settings, fixtures and tools, with plain-language labels in `ManagerLabels` |
+| `FTC.swift`, `FirmwareUpdate.swift`, `ManagerFirmwareView.swift` | RDM file transfer (ANSI E1.37-4): the standard's constants and CRC, the controller, and the firmware and files screen. Written from the standard |
+| `FirmwareSelfTest.swift` | Strict E1.37-4 Responder emulator and the file-transfer self-test |
 | `Snapshot.swift` | Developer aid: `--snapshot out.png` renders the window off-screen (no Screen Recording permission needed) |
 | `LoopbackTests.swift` | Combined send/receive checks |
 | `AppView.swift`, `main.swift` | Window, security panel, app entry point and `--selftest` |
 | `docs/manager-wire.md` | Packet format, keys and HMAC, with test vectors |
 | `docs/manager-semantics.md` | Discovery, GET/SET, RDM, TID catalogue, timing, spec-vs-library notes |
 | `docs/snow-summary.md` | SNOW scope and why it is deferred |
+| `scripts/make-app.sh`, `docs/packaging.md` | Builds a double-clickable `.app`; notes and limits |
 | `Sources/SignetTestSuite/Resources/SigNetLogo.png` | Sig-Net logo (white on green), from the official logo pack |
 
 Sig-Net® is a registered trademark. The logo and colours follow the Sig-Net
@@ -172,3 +176,10 @@ The license does not cover the Sig-Net® name or logo
 (`Sources/SignetTestSuite/Resources/SigNetLogo.png`), which belong to their
 owner, or the Sig-Net C library, which is not in this repo and has its own
 terms.
+
+The app links the Sig-Net desktop library (`signet-desktop-src-0.1.0`). Its
+README states no license, so check its terms with Singularity (UK) Ltd before
+sharing a packaged `.app`, which includes the library. The separate public
+[Sig-Net SDK](https://github.com/WayneHowell/public-sig-net-sdk) (C++ for
+Windows, not used here) is MIT-licensed, copyright Singularity (UK) Ltd, per
+the header of each source file.
