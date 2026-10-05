@@ -98,14 +98,14 @@ enum LoopbackTests {
         defer { tx.stop(); rx.stop() }
         if let problem { return (label, false, problem) }
         tx.startTimecode()
-        func frames(_ v: (UInt8, UInt8, UInt8, UInt8, UInt8)) -> Int { ((Int(v.0) * 60 + Int(v.1)) * 60 + Int(v.2)) * 25 + Int(v.3) }
+        func frames(_ v: [UInt8]) -> Int { ((Int(v[0]) * 60 + Int(v[1])) * 60 + Int(v[2])) * 25 + Int(v[3]) }
         guard spin(1.5, until: { rx.timecodes[7] != nil }), let a = rx.timecodes[7] else {
             return (label, false, "nothing on stream 7 within 1.5 s (tx \(tx.tcDisplay))")
         }
         spin(0.4)
         let b = rx.timecodes[7]!
-        let ok = b.value.4 == 0x01 && b.lost == 0 && frames(b.value) > frames(a.value)
-        return (label, ok, "rate 0x\(String(b.value.4, radix: 16)) lost \(b.lost) frames \(frames(a.value)) -> \(frames(b.value))")
+        let ok = b.value[4] == 0x01 && !b.lost && frames(b.value) > frames(a.value)
+        return (label, ok, "rate 0x\(String(b.value[4], radix: 16)) lost \(b.lost) frames \(frames(a.value)) -> \(frames(b.value))")
     }
 
     private static func preview(_ s: SecuritySettings) -> Row {
@@ -130,9 +130,9 @@ enum LoopbackTests {
             return s
         }
         let rxS = settings(.secure, "Sig-Net-Test-9")
-        let cases: [(String, SecuritySettings, Int)] = [
-            ("loopback secure rx rejects open tx", settings(.open, ""), Int(SIGNET_RX_DROP_MODE_MISMATCH.rawValue)),
-            ("loopback secure rx rejects wrong passphrase", settings(.secure, "Wrong-Pass-77x"), Int(SIGNET_RX_DROP_AUTH_FAILED.rawValue)),
+        let cases: [(String, SecuritySettings, DropReason)] = [
+            ("loopback secure rx rejects open tx", settings(.open, ""), .modeMismatch),
+            ("loopback secure rx rejects wrong passphrase", settings(.secure, "Wrong-Pass-77x"), .authFailed),
         ]
         return cases.map { label, txS, reason in
             let rx = Receiver(settings: rxS), tx = Transmitter(settings: txS)
@@ -145,15 +145,15 @@ enum LoopbackTests {
             if !rx.running { return (label, false, "rx: \(rx.status)") }
             if !tx.running { return (label, false, "tx: \(tx.status)") }
             tx.setAll(201)
-            func drops() -> UInt64 { withUnsafeBytes(of: rx.counters.drops) { $0.bindMemory(to: UInt64.self)[reason] } }
+            func drops() -> UInt64 { rx.counters.drops[reason.rawValue] }
             var published = false
             spin(1.5) {
                 published = published || rx.frame != nil
                 return false // watch the whole window: a frame must never appear
             }
-            let recorded = rx.rejections.contains { Int($0.drop_reason) == reason }
+            let recorded = rx.rejections.contains { $0.reason == reason }
             return (label, !published && drops() > 0 && recorded,
-                    "frame published \(published), drops[\(reason)] \(drops()), flight-recorder entry \(recorded), accepted \(rx.counters.accepted)")
+                    "frame published \(published), drops[\(reason.name)] \(drops()), flight-recorder entry \(recorded), accepted \(rx.counters.accepted)")
         }
     }
 }

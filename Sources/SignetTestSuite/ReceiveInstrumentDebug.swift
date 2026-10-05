@@ -1,8 +1,7 @@
-import CSignet
 import SigNet
 import SwiftUI
 
-/// Receive Debug: the one place on this tab with counters, drop reasons, packet hex and the library log.
+/// Receive Debug: the one place on this tab with counters, drop reasons, packet hex and the receiver log.
 struct ReceiveDebugView: View {
     @ObservedObject var rx: Receiver
     @State private var mode = "counters"
@@ -25,24 +24,14 @@ struct ReceiveDebugView: View {
 
     private var counters: some View {
         let c = rx.counters
-        var drops = withUnsafeBytes(of: c.drops) { Array($0.bindMemory(to: UInt64.self)) }
-        drops.append(c.coap_duplicates)
         let rows: [(String, UInt64)] = [
-            ("Packets accepted", c.accepted), ("Beacons heard", c.beacons), ("Packets dropped", c.drops_total),
-            ("Rejected packets recorded", c.rejections_recorded), ("Too many sources to merge", c.merge_saturations),
-            ("Flood packets dropped", c.dos_packets_dropped), ("Preview frames dropped", c.preview_frames_dropped),
-            ("Frame-rate buffer overflows", c.tap_frames_dropped), ("Frame-rate buffer stale", c.tap_frames_stale),
-            ("Send failures", c.send_failures), ("Receive failures", c.transport_recv_failures),
-            ("Packets truncated on receive", c.transport_recv_truncated), ("Runtime poll failures", c.runtime_poll_failures),
-            ("Runtime faulted", UInt64(c.runtime_faulted)), ("Runtime jobs dropped", c.poll_jobs_dropped),
-            ("Log lines dropped", c.log_records_dropped), ("Log delivery failures", c.log_delivery_failures),
-            ("Log muted", UInt64(max(0, c.log_muted))), ("RDM frames rejected", c.rdm_frames_rejected),
-            ("RDM changes blocked", c.rdm_sets_blocked), ("Offboard save failures", c.offboard_persist_failures),
-            ("Offboard pending at boot", UInt64(c.booted_offboard_pending)),
+            ("Packets accepted", c.accepted), ("Beacons heard", c.beacons), ("Packets dropped", c.dropsTotal),
+            ("Rejected packets recorded", c.rejectionsRecorded), ("Too many sources to merge", c.mergeSaturations),
+            ("Flood packets dropped", c.floodDropped),
         ]
         return HStack(alignment: .top, spacing: 12) {
             ModulePanel("Counters") {
-                counterList(rows, alarm: { name, _ in name == "Packets dropped" || name == "Runtime faulted" })
+                counterList(rows, alarm: { name, _ in name == "Packets dropped" })
                 Divider().overlay(Color.black.opacity(0.4))
                 HStack(spacing: 8) {
                     Text("This receiver’s ID").font(.system(size: 12, weight: .medium)).foregroundStyle(Color.inkDim)
@@ -51,7 +40,7 @@ struct ReceiveDebugView: View {
                 }
             }
             ModulePanel("Drops by reason") {
-                counterList(drops.indices.dropFirst().map { (dropName(UInt8($0)).capitalizedFirst, drops[$0]) }, alarm: { _, _ in true })
+                counterList(DropReason.allCases.map { ($0.name.capitalizedFirst, c.drops[$0.rawValue]) }, alarm: { _, _ in true })
             }
         }
     }
@@ -82,13 +71,12 @@ struct ReceiveDebugView: View {
             }
             LazyVStack(alignment: .leading, spacing: 2) {
                 ForEach(Array(rx.rejections.enumerated().reversed()), id: \.offset) { _, r in
-                    let header = withUnsafeBytes(of: r.header) { Identity.hex(Array($0.prefix(Int(r.header_len)))) }
                     HStack(alignment: .firstTextBaseline, spacing: 12) {
                         Lamp(color: .lampFault, size: 6)
-                        Text("−\(max(0, (rx.nowNs - r.monotonic_ns) / 1_000_000)) ms").foregroundStyle(Color.silk).frame(width: 90, alignment: .trailing)
-                        Text(dropName(r.drop_reason).capitalizedFirst).foregroundStyle(Color.ink).frame(width: 130, alignment: .leading)
-                        Text("\(r.datagram_len) B").foregroundStyle(Color.inkDim).frame(width: 60, alignment: .trailing)
-                        Text(header).foregroundStyle(Color.silk).textSelection(.enabled)
+                        Text("−\(max(0, (rx.nowNs - r.monotonicNs) / 1_000_000)) ms").foregroundStyle(Color.silk).frame(width: 90, alignment: .trailing)
+                        Text(r.reason.name.capitalizedFirst).foregroundStyle(Color.ink).frame(width: 130, alignment: .leading)
+                        Text("\(r.length) B").foregroundStyle(Color.inkDim).frame(width: 60, alignment: .trailing)
+                        Text(Identity.hex(r.header)).foregroundStyle(Color.silk).textSelection(.enabled)
                     }
                     .font(.system(size: 11.5, design: .monospaced)).monospacedDigit()
                     .padding(.vertical, 3)
@@ -103,7 +91,7 @@ private struct ReceiveLog: View {
     @ObservedObject var rx: Receiver
 
     var body: some View {
-        ModulePanel("Library log") {
+        ModulePanel("Receiver log") {
             ModeKeys(options: Receiver.levelNames.indices.map { ($0, Receiver.levelNames[$0].capitalized) }, selection: $rx.logLevel)
             Button("Clear") { rx.clearLog() }.buttonStyle(.softKey)
         } content: {
@@ -111,7 +99,7 @@ private struct ReceiveLog: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 1) {
                         if rx.log.isEmpty {
-                            Text(rx.running ? "No log lines at this level yet." : "Start receiving to see the library log.").foregroundStyle(Color.silk)
+                            Text(rx.running ? "No log lines at this level yet." : "Start receiving to see the receiver log.").foregroundStyle(Color.silk)
                         }
                         ForEach(Array(rx.log.enumerated()), id: \.offset) { i, line in
                             Text(line).foregroundStyle(Color.inkDim).textSelection(.enabled).id(i)
@@ -127,16 +115,6 @@ private struct ReceiveLog: View {
             }
         }
     }
-}
-
-private let dropNames = [
-    "none", "malformed", "unsupported mode", "mode mismatch", "bad version", "bad code", "bad URI",
-    "routing scope", "routing TUID", "replay session", "replay seq", "auth failed", "payload invalid",
-    "table saturated", "internal", "CoAP duplicate",
-]
-
-private func dropName(_ reason: UInt8) -> String {
-    dropNames.indices.contains(Int(reason)) ? dropNames[Int(reason)] : "reason \(reason)"
 }
 
 private extension String {

@@ -13,6 +13,7 @@ func selfTest() -> Int32 {
     report("rdm firmware upload (emulator)", FirmwareUpdate.selfTestFTC() ? nil : "see above")
     report("manager spec vectors", ManagerEngine.knownAnswers())
     report("sender spec vectors", TransmitterEngine.knownAnswers())
+    report("receiver spec vectors and parse path", ReceiverEngine.knownAnswers())
     let interface = CommandLine.arguments.firstIndex(of: "--interface").flatMap { CommandLine.arguments.dropFirst($0 + 1).first } ?? ""
     for mode in SecurityMode.allCases {
         let s = SecurityConfig()

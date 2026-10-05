@@ -21,6 +21,6 @@ public enum SigNetKeys {
     }
 
     /// §9.2.3 default Multicast Folding: universe 1, 110, 219… → 239.254.0.1.
-    public static func levelGroup(_ universe: Int) -> String { "239.254.0.\((universe - 1) % 109 + 1)" }
+    public static func levelGroup<T: BinaryInteger>(_ universe: T) -> String { "239.254.0.\((Int(universe) - 1) % 109 + 1)" }
     public static let timeGroup = "239.254.255.250", previewGroup = "239.254.255.249", nodeGroup = "239.254.255.253"
 }
