@@ -309,182 +309,262 @@ private func parseList(_ text: String, max: UInt16, what: String) throws -> [UIn
     return out.sorted()
 }
 
-private let dropNames = [
-    "none", "malformed", "unsupported mode", "mode mismatch", "bad version", "bad code", "bad URI",
-    "routing scope", "routing TUID", "replay session", "replay seq", "auth failed", "payload invalid",
-    "table saturated", "internal", "CoAP duplicate",
-]
-
-private func dropName(_ reason: UInt8) -> String {
-    dropNames.indices.contains(Int(reason)) ? dropNames[Int(reason)] : "reason \(reason)"
-}
-
 // MARK: - View
 
+/// Receive as one instrument: a control strip, the local settings, then Monitor, Timecode & preview, or Debug.
+/// Hex, drop reasons and the library log live only in Debug.
 struct ReceiveView: View {
     @ObservedObject var rx: Receiver
-    @State private var pane = Pane.live
+    @ObservedObject private var settings: SecuritySettings
+    @State private var mode = Snapshot.arg("--receive-tab") ?? "monitor"
 
-    enum Pane: String, CaseIterable { case live = "Live", timecode = "Timecode", preview = "Preview", diagnostics = "Diagnostics", log = "Log" }
+    init(rx: Receiver) {
+        self.rx = rx
+        settings = rx.settings
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Form {
-                TextField("Universes (e.g. 1-4, 10)", text: $rx.universesText)
-                TextField("Preview universes", text: $rx.previewText)
-                TextField("Timecode streams", text: $rx.timecodeText)
-                Stepper("Sources per universe: \(rx.sourcesPerUniverse)", value: $rx.sourcesPerUniverse, in: 1...64)
-                LabeledContent("TUID", value: Identity.hex(rx.tuid))
-            }
-            .disabled(rx.running)
-
+            controlStrip
             HStack {
-                Button(rx.running ? "Stop" : "Start") { rx.running ? rx.stop() : rx.start() }
-                    .disabled(!rx.running && !rx.settings.ready)
-                Text(rx.status).foregroundStyle(.secondary).lineLimit(2)
+                ModeKeys(options: [("monitor", "Monitor"), ("timecode", "Timecode & preview"), ("debug", "Debug")], selection: $mode)
+                Spacer()
             }
-
-            Picker("View", selection: $pane) {
-                ForEach(Pane.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-
-            switch pane {
-            case .live: live
-            case .timecode: timecode
-            case .preview: preview
-            case .diagnostics: diagnostics
-            case .log: logPane
-            }
-        }
-        .padding()
-    }
-
-    private func age(_ ns: Int64) -> String { "\(max(0, (rx.nowNs - ns) / 1_000_000)) ms" }
-
-    private var live: some View {
-        VStack(alignment: .leading) {
-            HStack {
-                TextField("Universe", value: $rx.selected, format: .number.grouping(.never)).frame(width: 80)
-                Stepper("Universe", value: $rx.selected, in: 1...63999).labelsHidden()
-                if let f = rx.frame {
-                    Text("Slots \(f.slot_count) · Sources \(f.source_count) · Age \(age(f.published_ns)) · \(rx.fps, specifier: "%.1f") fps")
-                        .monospacedDigit()
-                } else {
-                    Text(rx.universes.contains(UInt16(clamping: rx.selected)) || !rx.running ? "No data" : "Not monitored")
-                        .foregroundStyle(.secondary)
-                }
-            }
-            LevelGrid(levels: rx.levels, numbers: true, name: "Universe \(rx.selected)")
-        }
-    }
-
-    private var timecode: some View {
-        VStack(alignment: .leading) {
-            Button("Scan streams 1–255") { rx.scanTimecode() }.disabled(!rx.running)
-            List(rx.timecodes.keys.sorted(), id: \.self) { s in
-                let tc = rx.timecodes[s]!
-                let v = tc.value
-                let drop = [0x02, 0x06, 0x09].contains(v.4)
-                HStack {
-                    Text("Stream \(s)").frame(width: 80, alignment: .leading)
-                    Text(String(format: "%02d:%02d:%02d%@%02d", v.0, v.1, v.2, drop ? ";" : ":", v.3)).font(.body.monospacedDigit())
-                    Text("\(Double(signet_timecode_rate_millifps(v.4)) / 1000, specifier: "%g") fps").foregroundStyle(.secondary)
-                    if tc.lost != 0 { Text("LOST").bold().foregroundStyle(.red) }
-                }
-            }
-        }
-    }
-
-    private var preview: some View {
-        ScrollView {
-            VStack(alignment: .leading) {
-                if rx.previewUniverses.isEmpty { Text("No preview universes configured.").foregroundStyle(.secondary) }
-                ForEach(rx.previewUniverses, id: \.self) { u in
-                    if let p = rx.previews[u] {
-                        Text("Universe \(u) · Slots \(p.frame.slot_count) · Age \(age(p.frame.published_ns))").monospacedDigit()
-                        LevelGrid(levels: p.levels, numbers: false, name: "Preview universe \(u)").frame(height: 96)
-                    } else {
-                        Text("Universe \(u) · no preview frame yet").foregroundStyle(.secondary)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    switch mode {
+                    case "timecode": ReceiveTimecode(rx: rx); ReceivePreview(rx: rx)
+                    case "debug": ReceiveDebugView(rx: rx)
+                    default: settingsModule; ReceiveMonitor(rx: rx)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
 
-    private var diagnostics: some View {
-        let c = rx.counters
-        var drops = withUnsafeBytes(of: c.drops) { Array($0.bindMemory(to: UInt64.self)) }
-        drops.append(c.coap_duplicates)
-        let rows: [(String, UInt64)] = [
-            ("Accepted", c.accepted), ("Beacons", c.beacons), ("Drops total", c.drops_total),
-            ("Rejections recorded", c.rejections_recorded), ("Merge saturations", c.merge_saturations),
-            ("DoS packets dropped", c.dos_packets_dropped), ("Preview frames dropped", c.preview_frames_dropped),
-            ("Tap frames dropped", c.tap_frames_dropped), ("Tap frames stale", c.tap_frames_stale),
-            ("Send failures", c.send_failures), ("Recv failures", c.transport_recv_failures),
-            ("Recv truncated", c.transport_recv_truncated), ("Runtime poll failures", c.runtime_poll_failures),
-            ("Runtime faulted", UInt64(c.runtime_faulted)), ("Poll jobs dropped", c.poll_jobs_dropped),
-            ("Log records dropped", c.log_records_dropped), ("Log delivery failures", c.log_delivery_failures),
-            ("Log muted", UInt64(max(0, c.log_muted))), ("RDM frames rejected", c.rdm_frames_rejected),
-            ("RDM SETs blocked", c.rdm_sets_blocked), ("Offboard persist failures", c.offboard_persist_failures),
-            ("Booted offboard pending", UInt64(c.booted_offboard_pending)),
-        ]
-        return VStack(alignment: .leading) {
-            HStack {
-                Toggle("Auto refresh", isOn: $rx.autoDiagnostics)
-                Button("Refresh") { rx.refreshDiagnostics() }.disabled(!rx.running)
+    private var controlStrip: some View {
+        HStack(spacing: 10) {
+            if rx.running {
+                Button("Stop") { rx.stop() }.buttonStyle(SoftKeyStyle(lamp: .lampOnline))
+            } else {
+                Button("Start receiving") { rx.start() }
+                    .buttonStyle(SoftKeyStyle(prominent: true))
+                    .disabled(!settings.ready)
             }
-            HStack(alignment: .top, spacing: 24) {
-                counterGrid(rows)
-                counterGrid(drops.indices.dropFirst().map { ("Drop: \(dropNames[$0])", drops[$0]) })
+            // Not running and not "Stopped" means start failed; the status holds the reason.
+            let failed = !rx.running && rx.status != "Stopped"
+            if failed { Lamp(color: .lampFault) }
+            Text(rx.running || failed ? rx.status : settings.ready ? "Stopped. Set the universes below, then Start." : "Stopped. Fix the security settings above to start.")
+                .font(.system(size: 11.5))
+                .foregroundStyle(failed ? Color.lampFault : Color.silk)
+                .lineLimit(1).truncationMode(.middle)
+            Spacer()
+        }
+    }
+
+    private var settingsModule: some View {
+        ModulePanel("Settings") {
+            if rx.running { Silkscreen("Locked while receiving") }
+        } content: {
+            ReadoutRow(label: "Universes", value: rx.universesText.isEmpty ? nil : rx.universesText,
+                       set: .text(initial: rx.universesText) { t, done in
+                           commitList(t, max: 63999, what: "universe", done) { rx.universesText = $0 } },
+                       enabled: !rx.running)
+            ReadoutRow(label: "Preview universes", value: rx.previewText.isEmpty ? "None" : rx.previewText,
+                       set: .text(initial: rx.previewText) { t, done in
+                           commitList(t, max: 63999, what: "preview universe", done) { rx.previewText = $0 } },
+                       enabled: !rx.running)
+            ReadoutRow(label: "Timecode streams", value: rx.timecodeText.isEmpty ? "None" : rx.timecodeText,
+                       set: .text(initial: rx.timecodeText) { t, done in
+                           commitList(t, max: 255, what: "timecode stream", done) { rx.timecodeText = $0 } },
+                       enabled: !rx.running)
+            ReadoutRow(label: "Sources per universe", value: "\(rx.sourcesPerUniverse)",
+                       set: .number(initial: "\(rx.sourcesPerUniverse)", range: 1...64) { t, done in
+                           guard let n = Int(t.trimmingCharacters(in: .whitespaces)), (1...64).contains(n) else { return done(.refused("Enter 1–64")) }
+                           rx.sourcesPerUniverse = n
+                           done(.latched)
+                       },
+                       enabled: !rx.running)
+        }
+    }
+
+    /// Checks a list locally before storing it, so a typo is refused here rather than at Start.
+    private func commitList(_ text: String, max: UInt16, what: String, _ done: (Signal) -> Void, store: (String) -> Void) {
+        do {
+            _ = try parseList(text, max: max, what: what)
+            store(text.trimmingCharacters(in: .whitespaces))
+            done(.latched)
+        } catch {
+            done(.refused("\(error)"))
+        }
+    }
+}
+
+/// Live levels for one universe, with the frame's vital signs.
+private struct ReceiveMonitor: View {
+    @ObservedObject var rx: Receiver
+
+    /// While stopped, the list that Start would use.
+    private var universes: [UInt16] {
+        rx.running || !rx.universes.isEmpty ? rx.universes : (try? parseList(rx.universesText, max: 63999, what: "")) ?? []
+    }
+    private var selection: Binding<UInt16> {
+        Binding(get: { UInt16(clamping: rx.selected) }, set: { rx.selected = Int($0) })
+    }
+
+    var body: some View {
+        let f = rx.frame
+        ModulePanel("Monitor") {
+            chooser
+        } content: {
+            HStack(spacing: 8) {
+                vital("Channels driven", f.map { "\($0.slot_count)" })
+                vital("Sources", f.map { "\($0.source_count)" })
+                vital("Frame age", f.map { "\(max(0, (rx.nowNs - $0.published_ns) / 1_000_000)) ms" })
+                vital("Frame rate", f.map { _ in String(format: "%.1f fps", rx.fps) })
             }
-            Text("Flight recorder").font(.headline)
-            List(Array(rx.rejections.enumerated().reversed()), id: \.offset) { _, r in
-                let header = withUnsafeBytes(of: r.header) { Identity.hex(Array($0.prefix(Int(r.header_len)))) }
-                HStack {
-                    Text("−\(age(r.monotonic_ns))").frame(width: 80, alignment: .trailing)
-                    Text(dropName(r.drop_reason)).frame(width: 120, alignment: .leading)
-                    Text("\(r.datagram_len) B").frame(width: 60, alignment: .trailing)
-                    Text(header).font(.caption.monospaced()).textSelection(.enabled)
+            ZStack {
+                LevelGrid(levels: f == nil ? Array(repeating: 0, count: 512) : rx.levels, numbers: f != nil, name: "Universe \(rx.selected) levels")
+                    .opacity(f == nil ? 0.55 : 1)
+                if f == nil {
+                    Text(!rx.running ? "Stopped" : universes.contains(UInt16(clamping: rx.selected)) ? "Waiting for universe \(rx.selected)" : "Universe \(rx.selected) is not in the list")
+                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Color.inkDim)
+                        .padding(.horizontal, 12).padding(.vertical, 6)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(Color.readoutWindow.opacity(0.92)))
                 }
-                .monospacedDigit()
+            }
+            .frame(height: 340)
+        }
+    }
+
+    @ViewBuilder private var chooser: some View {
+        HStack(spacing: 8) {
+            Silkscreen("Universe")
+            if universes.count > 1 && universes.count <= 8 {
+                ModeKeys(options: universes.map { ($0, "\($0)") }, selection: selection)
+            } else if universes.count > 8 {
+                Menu {
+                    ForEach(universes, id: \.self) { u in Button("Universe \(u)") { rx.selected = Int(u) } }
+                } label: { Text("\(rx.selected)") }
+                    .menuStyle(.borderlessButton).fixedSize()
+                    .help("Choose the universe to show")
+            } else {
+                Text("\(rx.selected)").font(.system(size: 13, weight: .semibold, design: .monospaced)).foregroundStyle(Color.ink)
             }
         }
     }
 
-    private func counterGrid(_ rows: [(String, UInt64)]) -> some View {
-        Grid(alignment: .leading, verticalSpacing: 1) {
-            ForEach(rows, id: \.0) { name, value in
-                GridRow {
-                    Text(name).foregroundStyle(.secondary)
-                    Text("\(value)").monospacedDigit().foregroundStyle(value > 0 && name.hasPrefix("Drop") ? .orange : .primary)
-                }
+    private func vital(_ label: String, _ value: String?) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Silkscreen(label)
+            ReadoutWindow {
+                Text(value ?? "—")
+                    .font(.system(size: 18, weight: .medium, design: .monospaced)).monospacedDigit()
+                    .foregroundStyle(value == nil ? Color.silk : Color.ink)
+                    .padding(.vertical, 4)
             }
         }
-        .font(.caption)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue(value ?? "no value")
+    }
+}
+
+/// Each timecode stream as a large display with its rate and a running/lost lamp.
+private struct ReceiveTimecode: View {
+    @ObservedObject var rx: Receiver
+
+    private var streams: [UInt16] {
+        let live = rx.timecodes.keys.sorted()
+        if !live.isEmpty { return live }
+        return rx.running ? rx.timecodeStreams : (try? parseList(rx.timecodeText, max: 255, what: "")) ?? []
     }
 
-    private var logPane: some View {
-        VStack(alignment: .leading) {
-            HStack {
-                Picker("Log level", selection: $rx.logLevel) {
-                    ForEach(Receiver.levelNames.indices, id: \.self) { Text(Receiver.levelNames[$0]).tag($0) }
-                }
-                .frame(width: 200)
-                Button("Clear") { rx.clearLog() }
+    var body: some View {
+        ModulePanel("Timecode") {
+            Button("Scan streams") { rx.scanTimecode() }
+                .buttonStyle(.softKey)
+                .disabled(!rx.running)
+                .help("Look for timecode on every stream, 1 to 255, and show the live ones")
+        } content: {
+            if streams.isEmpty {
+                Text(rx.running ? "No timecode streams. Press Scan streams." : "No timecode streams set.")
+                    .font(.system(size: 12)).foregroundStyle(Color.silk)
             }
-            ScrollViewReader { proxy in
-                List(Array(rx.log.enumerated()), id: \.offset) { i, line in
-                    Text(line).font(.caption.monospaced()).textSelection(.enabled).id(i)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 12, alignment: .leading)], alignment: .leading, spacing: 12) {
+                ForEach(streams, id: \.self) { s in display(s, rx.timecodes[s]) }
+            }
+        }
+    }
+
+    private func display(_ s: UInt16, _ tc: signet_timecode_t?) -> some View {
+        let v = tc?.value
+        let drop = v.map { [0x02, 0x06, 0x09].contains($0.4) } ?? false
+        let time = v.map { String(format: "%02d:%02d:%02d%@%02d", $0.0, $0.1, $0.2, drop ? ";" : ":", $0.3) } ?? "--:--:--:--"
+        let lost = (tc?.lost ?? 0) != 0
+        let state = tc == nil ? (rx.running ? "Waiting" : "Stopped") : lost ? "Lost" : "Running"
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Silkscreen("Stream \(s)")
+                Spacer()
+                Lamp(color: tc == nil ? nil : lost ? .lampFault : .lampOnline)
+                Text(state).font(.system(size: 11, weight: .semibold)).foregroundStyle(lost ? Color.lampFault : Color.inkDim)
+            }
+            ReadoutWindow(signal: lost ? .refused("") : .idle) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(time)
+                        .font(.system(size: 34, weight: .medium, design: .monospaced)).monospacedDigit()
+                        .foregroundStyle(tc == nil ? Color.silk : lost ? Color.inkDim : Color.lampLatch)
+                    Spacer()
+                    Text(v.map { String(format: "%g fps", Double(signet_timecode_rate_millifps($0.4)) / 1000) } ?? "")
+                        .font(.system(size: 12, design: .monospaced)).foregroundStyle(Color.inkDim)
                 }
-                .onChange(of: rx.log.count) { n in proxy.scrollTo(n - 1, anchor: .bottom) }
+                .padding(.vertical, 8)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Timecode stream \(s)")
+        .accessibilityValue("\(tc == nil ? "no timecode" : time), \(state)")
+    }
+}
+
+/// Preview universes: the look a console is about to send.
+private struct ReceivePreview: View {
+    @ObservedObject var rx: Receiver
+
+    private var universes: [UInt16] {
+        rx.running || !rx.previewUniverses.isEmpty ? rx.previewUniverses : (try? parseList(rx.previewText, max: 63999, what: "")) ?? []
+    }
+
+    var body: some View {
+        ModulePanel("Preview") {
+            if universes.isEmpty {
+                Text("No preview universes set. Add them under Monitor, Settings.")
+                    .font(.system(size: 12)).foregroundStyle(Color.silk)
+            }
+            ForEach(universes, id: \.self) { u in
+                let p = rx.previews[u]
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 14) {
+                        Silkscreen("Universe \(u)")
+                        if let p {
+                            Text("\(p.frame.slot_count) channels  ·  \(max(0, (rx.nowNs - p.frame.published_ns) / 1_000_000)) ms old")
+                                .font(.system(size: 11, design: .monospaced)).monospacedDigit().foregroundStyle(Color.inkDim)
+                        } else {
+                            Text(rx.running ? "No preview yet" : "Stopped").font(.system(size: 11)).foregroundStyle(Color.silk)
+                        }
+                    }
+                    LevelGrid(levels: p?.levels ?? Array(repeating: 0, count: 512), numbers: false, name: "Preview universe \(u)")
+                        .frame(height: 110)
+                }
             }
         }
     }
 }
 
-/// 32×16 slot grid with intensity shading; drawn in one Canvas so 20 Hz redraws stay cheap.
+/// 32×16 slot grid in one Canvas so 20 Hz redraws stay cheap: recessed window, teal by level.
 private struct LevelGrid: View {
     let levels: [UInt8]
     let numbers: Bool
@@ -492,19 +572,24 @@ private struct LevelGrid: View {
 
     var body: some View {
         Canvas { ctx, size in
-            let w = size.width / 32, h = size.height / 16
+            let pad: CGFloat = 6
+            let w = (size.width - pad * 2) / 32, h = (size.height - pad * 2) / 16
             for (i, v) in levels.prefix(512).enumerated() {
-                let rect = CGRect(x: CGFloat(i % 32) * w, y: CGFloat(i / 32) * h, width: w - 1, height: h - 1)
-                ctx.fill(Path(rect), with: .color(Color.sigNet.opacity(0.08 + 0.92 * Double(v) / 255)))
+                let rect = CGRect(x: pad + CGFloat(i % 32) * w, y: pad + CGFloat(i / 32) * h, width: w - 2, height: h - 2)
+                let cell = Path(roundedRect: rect, cornerRadius: 2)
+                ctx.fill(cell, with: .color(Color.module.opacity(0.55)))
+                if v > 0 { ctx.fill(cell, with: .color(Color.lampLatch.opacity(0.18 + 0.82 * Double(v) / 255))) }
                 if numbers {
-                    ctx.draw(Text("\(v)").font(.system(size: 8).monospacedDigit()).foregroundColor(v > 140 ? .white : .primary),
+                    ctx.draw(Text("\(v)").font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(v > 150 ? Color.readoutWindow : v > 0 ? Color.ink : Color.silk.opacity(0.6)),
                              at: CGPoint(x: rect.midX, y: rect.midY))
                 }
             }
         }
-        .frame(minHeight: 120)
+        .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(Color.readoutWindow)
+            .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(Color.black.opacity(0.7), lineWidth: 1)))
         .accessibilityElement()
         .accessibilityLabel(name)
-        .accessibilityValue("\(levels.filter { $0 > 0 }.count) of 512 slots above zero, highest \(levels.max() ?? 0), slot 1 at \(levels.first ?? 0)")
+        .accessibilityValue("\(levels.filter { $0 > 0 }.count) of 512 channels above zero, highest \(levels.max() ?? 0), channel 1 at \(levels.first ?? 0)")
     }
 }

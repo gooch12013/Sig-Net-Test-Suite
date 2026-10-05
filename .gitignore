@@ -2,3 +2,5 @@
 vendor/
 .swiftpm/
 *.xcodeproj
+.impeccable/review/
+.impeccable/questions/

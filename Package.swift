@@ -13,9 +13,11 @@ let package = Package(
     platforms: [.macOS(.v13)],
     targets: [
         .systemLibrary(name: "CSignet", path: "Sources/CSignet"),
+        // E1.37-4 firmware upload controller (with FTC_FILELIST) + Responder emulator.
+        .target(name: "CFTC", path: "Sources/CFTC"),
         .executableTarget(
             name: "SignetTestSuite",
-            dependencies: ["CSignet"],
+            dependencies: ["CSignet", "CFTC"],
             resources: [.process("Resources")],
             swiftSettings: [.unsafeFlags(["-Xcc", "-I\(prefix)/include"])],
             linkerSettings: [.unsafeFlags(["-L\(prefix)/lib", "-Xlinker", "-rpath", "-Xlinker", "\(prefix)/lib"])]

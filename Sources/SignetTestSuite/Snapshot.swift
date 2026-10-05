@@ -14,7 +14,15 @@ enum Snapshot {
     /// The view to render; set by main.swift.
     static var render: () -> AnyView = { AnyView(EmptyView()) }
 
-    static func configure(settings: SecuritySettings, manager: Manager) {
+    static func configure(settings: SecuritySettings, manager: Manager, fixtures: FixtureStore) {
+        if args.contains("--demo-channels") {
+            // Synthetic fixture for checking the Transmit channel headings in a snapshot; never used by the app itself.
+            var f = FixtureStore.Fixture()
+            f.universe = 1
+            f.values[0x00F0] = [0, 3]
+            for (i, name) in ["Dimmer", "Red", "Green", "Blue", "White", "Strobe", "Program", "Program speed"].enumerated() { f.channels[UInt16(i)] = name }
+            fixtures.byUID["DEMO00000001"] = f
+        }
         if let p = arg("--passphrase") { settings.mode = .secure; settings.passphrase = p }
         if let s = arg("--scope") { settings.scope = s }
         if let i = arg("--interface") { manager.interface = i }

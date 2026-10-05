@@ -377,9 +377,13 @@ final class Manager: ObservableObject {
 
     /// GET/SET only: discovery (CC 0x10, PIDs 1-3) is never tunnelled (§10.5.5).
     func rdm(_ target: [UInt8], ep: UInt16, dest: [UInt8], set: Bool, pid: UInt16, pd: [UInt8] = [],
-             done: @escaping (ManagerResult) -> Void = { _ in }) {
+             upload: Bool = false, done: @escaping (ManagerResult) -> Void = { _ in }) {
         guard !(1...3).contains(pid), dest.count == 6, pd.count <= 231 else {
             return done(ManagerResult(text: "Refused locally: discovery PIDs / bad UID / PD > 231 B"))
+        }
+        // While a firmware upload runs, only its own requests go out: anything else could land between packets.
+        guard upload || !FirmwareUpdate.active else {
+            return done(ManagerResult(text: "Busy: a firmware upload is running"))
         }
         tn &+= 1
         let f = ManagerRDM.frame(dest: dest, src: tuid, tn: tn, cc: set ? 0x30 : 0x20, pid: pid, pd: pd)

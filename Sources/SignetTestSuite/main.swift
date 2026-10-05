@@ -6,6 +6,8 @@ let transmitter = Transmitter(settings: settings)
 let receiver = Receiver(settings: settings)
 let fakeDevice = FakeDevice(settings: settings)
 // Snapshot runs get their own TUID so they never collide with a running GUI Manager on the same node.
+/// What RDM has learned about fixtures; Manager fills it, Transmit labels its faders from it.
+let fixtureStore = FixtureStore()
 let manager = Manager(settings: settings, tuid: Identity.tuid(Snapshot.args.contains("--snapshot") ? "snapshot" : "manager"))
 
 /// `swift run SignetTestSuite --selftest`: exercises every part without the
@@ -17,6 +19,7 @@ func selfTest() -> Int32 {
         failed = failed || !ok
     }
     report("timecode counter", Transmitter.selfTestTimecode())
+    report("rdm firmware upload (emulator)", FirmwareUpdate.selfTestFTC())
     for mode in SecurityMode.allCases {
         let s = SecuritySettings()
         s.mode = mode
@@ -47,9 +50,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular) // SwiftPM executables start as background apps
         NSApp.activate(ignoringOtherApps: true)
         Snapshot.render = {
-            AnyView(AppView(settings: settings, transmitter: transmitter, receiver: receiver, device: fakeDevice, manager: manager))
+            AnyView(AppView(settings: settings, transmitter: transmitter, receiver: receiver, device: fakeDevice, manager: manager, fixtures: fixtureStore))
         }
-        Snapshot.configure(settings: settings, manager: manager)
+        Snapshot.configure(settings: settings, manager: manager, fixtures: fixtureStore)
     }
     func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool { true }
     func applicationWillTerminate(_: Notification) {
@@ -65,7 +68,7 @@ struct SignetTestApp: App {
 
     var body: some Scene {
         WindowGroup("Sig-Net Test Suite") {
-            AppView(settings: settings, transmitter: transmitter, receiver: receiver, device: fakeDevice, manager: manager)
+            AppView(settings: settings, transmitter: transmitter, receiver: receiver, device: fakeDevice, manager: manager, fixtures: fixtureStore)
         }
     }
 }

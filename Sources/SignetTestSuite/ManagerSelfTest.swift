@@ -12,7 +12,7 @@ extension Manager {
         dev.start()
         guard dev.running else { return fail("FakeDevice did not start: \(dev.status)") }
         defer { dev.stop() }
-        let m = Manager(settings: s)
+        let m = Manager(settings: s, tuid: Identity.tuid("selftest-manager")) // never share a lane with a running GUI Manager
         m.heartbeat = false
         m.start()
         guard m.running else { return fail("start: \(m.status)") }

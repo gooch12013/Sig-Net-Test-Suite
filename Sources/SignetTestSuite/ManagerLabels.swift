@@ -21,6 +21,11 @@ enum ManagerLabels {
 
     static let identifyNames = [0: "Off", 1: "Subtle", 2: "Full", 3: "Mute", 4: "Un-mute"]
     static let protocolNames = [0: "Sig-Net", 1: "Art-Net", 2: "sACN"]
+    static let failoverNames = [0: "Hold last state", 1: "Blackout", 2: "Full", 3: "Play scene", 4: "Stop output"]
+
+    static func dmxTiming(_ mode: UInt8, _ timing: UInt8) -> String {
+        (mode == 1 ? "Change only" : "Continuous") + " · " + (["Maximum", "Medium", "Minimum"].indices.contains(Int(timing)) ? ["Maximum", "Medium", "Minimum"][Int(timing)] : "\(timing)") + " timing"
+    }
 
     static let eventNames: [UInt16: String] = [
         0x0001: "Signature failures", 0x0002: "Replays", 0x0003: "Rate limiting", 0x0004: "Unauthorised onboarding",
@@ -63,6 +68,9 @@ enum ManagerLabels {
             return (text.isEmpty ? "Version" : text) + " · build \(mgrU32(v))"
         case 0x0501: return v.map { String(format: "%02X", $0) }.joined(separator: ":")
         case 0x0606: return v.first == 0 ? "Default addresses" : "Custom addresses"
+        case 0x0908 where !v.isEmpty:
+            return v[0] == 3 && v.count >= 3 ? "Play scene \(mgrU16(v.dropFirst()))" : failoverNames[Int(v[0])] ?? "Mode \(v[0])"
+        case 0x0909 where v.count >= 2: return dmxTiming(v[0], v[1])
         case 0xFF03: return "\(v.filter { $0 > 0 }.count) of \(v.count) channels above zero"
         default: return ManagerTID.describe(tid, v)
         }
@@ -74,6 +82,12 @@ enum ManagerLabels {
         case text, number(ClosedRange<Int>), choice([(UInt8, String)]), raw
     }
 
+    /// Choice editors whose values are more than one byte. Play scene needs a scene number, so it stays in Debug.
+    static let multiByteChoices: [UInt16: [([UInt8], String)]] = [
+        0x0908: [0, 1, 2, 4].map { ([UInt8($0), 0, 0], failoverNames[$0]!) },
+        0x0909: [0, 1].flatMap { m in [0, 1, 2].map { t in ([UInt8(m), UInt8(t)], dmxTiming(UInt8(m), UInt8(t))) } },
+    ]
+
     static func editor(_ tid: UInt16) -> Editor? {
         switch tid {
         case 0x0605, 0x0902: return .text
@@ -82,7 +96,8 @@ enum ManagerLabels {
         case 0x0905: return .choice((0...3).flatMap { d in [UInt8(d), UInt8(d) | 4] }.map { ($0, direction($0)) })
         case 0x0305: return .choice([(0, "Off"), (1, "Background discovery"), (2, "Queue polling"), (3, "Both")])
         case 0x090B: return .choice([(0, "Sig-Net"), (1, "Art-Net"), (2, "sACN")])
-        case 0x0606, 0x0903, 0x0906, 0x0908, 0x0909: return .raw
+        case 0x0606: return .choice([(0, "Reset to default addresses")])
+        case 0x0903, 0x0906: return .raw
         default: return nil
         }
     }
