@@ -1,5 +1,4 @@
 import AppKit
-import CFTC
 import SwiftUI
 
 /// Firmware and files of one RDM fixture (ANSI E1.37-4), shown when the fixture lists FTC_INITIATE.
@@ -15,7 +14,7 @@ struct ManagerFirmwarePanel: View {
 
     enum Kind { case upload, download }
 
-    @State private var decl: ftc_declarations?
+    @State private var decl: FTC.Declarations?
     @State private var capsNote: String?
     @State private var files: [FirmwareUpdate.FixtureFile]?
     @State private var filesNote: String?
@@ -32,13 +31,13 @@ struct ManagerFirmwarePanel: View {
     @State private var outcome: (ok: Bool, text: String)?
 
     /// Last capabilities and file list per fixture UID, so they survive tab switches. Main queue only.
-    private static var known: [String: ftc_declarations] = [:]
+    private static var known: [String: FTC.Declarations] = [:]
     private static var knownFiles: [String: [FirmwareUpdate.FixtureFile]] = [:]
 
     private var running: Bool { job != nil }
     private var idle: Bool { manager.running && !manager.busy && !FirmwareUpdate.active && !running }
     /// Test mode for the selected fixture file (its own capabilities), else what the fixture declares overall.
-    private var testModeOK: Bool { target?.testModeOK ?? decl.map { $0.capabilities & UInt32(FTC_TESTMODE_SUPPORTED) != 0 } ?? false }
+    private var testModeOK: Bool { target?.testModeOK ?? decl.map { $0.capabilities & FTC.Cap.testModeSupported != 0 } ?? false }
     private var testOn: Bool { testMode == 1 && testModeOK }
     private var canStart: Bool {
         idle && fileURL != nil && decl?.status == 0 && target?.acceptsUpload == true
@@ -108,30 +107,29 @@ struct ManagerFirmwarePanel: View {
         let get: (@escaping (Signal) -> Void) -> Void = { readCaps(done: $0) }
         let on = idle
         ReadoutRow(label: "Transfer version", value: capsNote ?? d.map { "\($0.version >> 8).\(String(format: "%02d", $0.version & 0xFF))" }, get: get, enabled: on)
-        ReadoutRow(label: "Accepts upload", value: d.map { $0.capabilities & UInt32(FTC_ACCEPT_UPLOAD) != 0 ? "Yes" : "No" }, get: get, enabled: on)
-        ReadoutRow(label: "Test mode", value: d.map { $0.capabilities & UInt32(FTC_TESTMODE_SUPPORTED) != 0 ? "Supported" : "Not supported" }, get: get, enabled: on)
-        ReadoutRow(label: "Largest file", value: d.map { $0.max_file_size == 0 ? "No limit given" : size(Int($0.max_file_size)) }, get: get, enabled: on)
-        ReadoutRow(label: "Block size", value: d.map { "\($0.block_size) bytes" }, get: get, enabled: on)
-        ReadoutRow(label: "Start delay", value: d.map { "\($0.initial_delay_ms) ms" }, get: get, enabled: on)
-        ReadoutRow(label: "Packet delay", value: d.map { $0.accumulated_byte_count == 0 ? "\($0.inter_packet_delay_ms) ms"
-            : "\($0.inter_packet_delay_ms) ms, +\($0.accumulated_byte_delay_ms) ms per \($0.accumulated_byte_count) bytes" }, get: get, enabled: on)
-        ReadoutRow(label: "Check delay", value: d.map { "\($0.validation_delay_ms) ms" }, get: get, enabled: on)
-        ReadoutRow(label: "If interrupted", value: d.map { $0.capabilities & UInt32(FTC_FAIL_MAY_BRICK) != 0 ? "May stop working" : "No risk declared" }, get: get, enabled: on)
+        ReadoutRow(label: "Accepts upload", value: d.map { $0.capabilities & FTC.Cap.acceptUpload != 0 ? "Yes" : "No" }, get: get, enabled: on)
+        ReadoutRow(label: "Test mode", value: d.map { $0.capabilities & FTC.Cap.testModeSupported != 0 ? "Supported" : "Not supported" }, get: get, enabled: on)
+        ReadoutRow(label: "Largest file", value: d.map { $0.fileSize == 0 ? "No limit given" : size(Int($0.fileSize)) }, get: get, enabled: on)
+        ReadoutRow(label: "Block size", value: d.map { "\($0.blockSize) bytes" }, get: get, enabled: on)
+        ReadoutRow(label: "Start delay", value: d.map { "\($0.initialDelay) ms" }, get: get, enabled: on)
+        ReadoutRow(label: "Packet delay", value: d.map { $0.accumulatedByteCount == 0 ? "\($0.interPacketDelay) ms"
+            : "\($0.interPacketDelay) ms, +\($0.accumulatedByteDelay) ms per \($0.accumulatedByteCount) bytes" }, get: get, enabled: on)
+        ReadoutRow(label: "Check delay", value: d.map { "\($0.validationDelay) ms" }, get: get, enabled: on)
+        ReadoutRow(label: "If interrupted", value: d.map { $0.capabilities & FTC.Cap.failMayBrick != 0 ? "May stop working" : "No risk declared" }, get: get, enabled: on)
     }
 
     /// GET:FTC_INITIATE, SessionID 0, FileID 0: declarations only. Retries while another panel holds the Manager.
     private func readCaps(attempt: Int = 0, done: @escaping (Signal) -> Void = { _ in }) {
         guard manager.running, let dest = mgrBytes(hex: uid) else { return done(.silent("The Manager isn't running")) }
-        let pd: [UInt8] = [UInt8(FTC_DEF_NO_SESSIONID_OFFERED), 0, UInt8(FTC_VERSION >> 8), UInt8(FTC_VERSION & 0xFF), 0, 0]
-        manager.rdm(device.tuid, ep: port, dest: dest, set: false, pid: UInt16(FTC_INITIATE), pd: pd) { r in
+        let pd: [UInt8] = [FTC.DEF.noSessionIDOffered, FTC.DEF.noFileIDOffered] + mgrBE16(FTC.version) + [0, 0]
+        manager.rdm(device.tuid, ep: port, dest: dest, set: false, pid: FTC.PID.initiate, pd: pd) { r in
             if r.text.hasPrefix("Busy"), attempt < 600 { // up to 5 min: Read all (or a transfer) can hold the Manager that long
                 return DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { readCaps(attempt: attempt + 1, done: done) }
             }
             let f = r.frame
             guard r.ok, ManagerRDM.valid(f), f[16] == 0 else { return done(.silent("No answer from the fixture")) }
             let rpd = Array(f[24..<24 + Int(f[23])])
-            var d = ftc_declarations()
-            guard rpd.withUnsafeBufferPointer({ ftc_parse_declarations($0.baseAddress, UInt8(rpd.count), &d) }) != 0 else {
+            guard let d = FTC.Declarations(rpd) else {
                 return done(.refused("The fixture's answer didn't make sense"))
             }
             Self.known[uid] = d
@@ -141,9 +139,9 @@ struct ManagerFirmwarePanel: View {
         }
     }
 
-    private func show(_ d: ftc_declarations) {
+    private func show(_ d: FTC.Declarations) {
         decl = d
-        capsNote = d.status == 0 ? nil : FirmwareUpdate.statusText(Int32(d.status))
+        capsNote = d.status == 0 ? nil : FirmwareUpdate.statusText(d.status)
     }
 
     // MARK: - Files on the fixture
@@ -190,8 +188,8 @@ struct ManagerFirmwarePanel: View {
         if !f.suffix.isEmpty { parts.append(".\(f.suffix)") }
         parts.append(f.size == 0 ? "size not given" : size(Int(f.size)))
         parts.append(ways.isEmpty ? "no transfers" : ways.joined(separator: ", "))
-        if f.capabilities & UInt32(FTC_BOOTLOADER_SWITCH) != 0 { parts.append("restarts to load") }
-        if f.capabilities & UInt32(FTC_FAIL_MAY_BRICK) != 0 { parts.append("may stop working if interrupted") }
+        if f.capabilities & FTC.Cap.bootloaderSwitch != 0 { parts.append("restarts to load") }
+        if f.capabilities & FTC.Cap.failMayBrick != 0 { parts.append("may stop working if interrupted") }
         return parts.joined(separator: " · ")
     }
 
@@ -343,7 +341,7 @@ struct ManagerFirmwarePanel: View {
             do { try Data(data).write(to: url, options: .atomic) } catch {
                 return (false, "Downloaded, but couldn't save to \(url.lastPathComponent): \(error.localizedDescription)")
             }
-            let checked = o.result.declared.capabilities & UInt32(FTC_GENERATE_FILECRC) != 0 && o.result.responder_crc == o.result.file_crc
+            let checked = o.result.declared.capabilities & FTC.Cap.generateFileCRC != 0 && o.result.responderCRC == o.result.fileCRC
             let check = checked ? "The checksum matches the fixture's." : "The fixture gives no checksum for this file, so it couldn't be checked."
             return (true, "Saved \(data.count) bytes as \(url.lastPathComponent). \(check)")
         }
