@@ -11,7 +11,7 @@ Mode, so it can test consoles, fixtures and other Managers.
 | Transmit | Sender | Up to 16 universes with faders, universe priority, sync, timecode generator (all 11 rates), preview, test patterns (chase, ramp, random) |
 | Receive | Node (data plane) | Live 512-slot view per universe, merge source count, frame age and rate, timecode streams, preview frames, diagnostics counters, drops by reason, the last 32 rejected packets, library log |
 | Device | Complete Node | A fake fixture that Managers can discover and configure: parameter store with transactions, two proprietary TIDs, a virtual RDM responder per endpoint, offboard and network-change handlers that only log |
-| Manager | Manager | Discovery (broadcast, range, targeted polls), device list, GET/SET editor for every TID, RDM commands and Table of Devices, packet log with authentication results |
+| Manager | Manager | Finds devices and lists them by name. Per device: an overview (identity, connection, health, security events), a settings form with each port's live values and inline editing, RDM fixtures by name (identify, label, start address), filtered traffic, and raw TID/PID tools. Poll options are under Advanced |
 
 Transmit, Receive and Device use the Sig-Net C library. The library has no
 Manager role, so the Manager is written in Swift from the spec, using CryptoKit
@@ -96,6 +96,20 @@ and exits non-zero on any failure. It takes about 20 seconds. It checks:
 - The Manager: spec test vectors, then discovering the fake Device, GET/SET of its label, refusal detection, Table of Devices and RDM DEVICE_INFO, and (Secure) rejection of a wrong passphrase.
 - Multiple universes, priority merging, sync, timecode, preview, and (Secure) rejection of an Open-Mode sender and of a wrong passphrase.
 
+## Probing a real device
+
+```sh
+swift run SignetTestSuite --probe --node <TUID> --ip <device IP> [--interface <local IP>] [--passphrase <p>] [--scope <s>] [--rdm-uid <UID>]
+```
+
+Runs the Manager tab's code against one real Node and prints a line per item:
+every poll shape at every query level, a GET of every catalogue TID on its
+endpoints, SET round-trips (label, identify, endpoint universe, label,
+direction, RDM config), then RDM through endpoint 1 (ToD flush and request,
+DEVICE_INFO, labels, SLOT_INFO, SLOT_DESCRIPTION 0-10, IDENTIFY on and off).
+Every SET is put back afterwards. It never sends offboard, reboot or network
+SETs. Omit `--passphrase` for Open Mode. It takes about 2.5 minutes.
+
 ## Findings so far
 
 Differences between the library and the spec. Details are in
@@ -131,7 +145,8 @@ Found by reading the library source, not yet tested:
 | `Transmitter.swift`, `TransmitView.swift` | Transmit tab |
 | `ReceiveView.swift` | Receive tab |
 | `DeviceView.swift`, `DeviceRDM.swift` | Device tab and its RDM responder |
-| `Manager*.swift` | Manager: codec and keys, engine, TID catalogue, view, self-test |
+| `Manager*.swift` | Manager: codec and keys, engine, TID catalogue, self-test, `--probe`; screens split into overview/traffic (`ManagerView`), settings, fixtures and tools, with plain-language labels in `ManagerLabels` |
+| `Snapshot.swift` | Developer aid: `--snapshot out.png` renders the window off-screen (no Screen Recording permission needed) |
 | `LoopbackTests.swift` | Combined send/receive checks |
 | `AppView.swift`, `main.swift` | Window, security panel, app entry point and `--selftest` |
 | `docs/manager-wire.md` | Packet format, keys and HMAC, with test vectors |

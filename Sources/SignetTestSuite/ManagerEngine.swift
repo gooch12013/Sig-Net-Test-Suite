@@ -362,6 +362,14 @@ final class Manager: ObservableObject {
         begin(Pending(target: target, ep: ep, tlvs: tlvs, kind: .set, timeout: 0.5, done: done))
     }
 
+    /// TOD_CONTROL 0x01: flush the ToD and run full discovery. RDM TLVs are never
+    /// echoed or SET_REPLY'd (§10.5), so there is nothing to wait for; request the ToD afterwards.
+    func flushToD(_ target: [UInt8], ep: UInt16) {
+        guard running, pending == nil else { return }
+        devices[Identity.hex(target)]?.tod[ep] = []
+        command(target, ep, [ManagerTLV(tid: 0x0303, value: [0x01])], attempt: 0)
+    }
+
     func requestToD(_ target: [UInt8], ep: UInt16, done: @escaping (ManagerResult) -> Void = { _ in }) {
         devices[Identity.hex(target)]?.tod[ep] = []
         begin(Pending(target: target, ep: ep, tlvs: [ManagerTLV(tid: 0x0303, value: [0x00])], kind: .tod, timeout: 1.5, done: done))
@@ -508,7 +516,11 @@ final class Manager: ObservableObject {
                 finish(ManagerResult(ok: true, text: "EP\(ep): " + values, tlvs: got))
             }
         case .set:
-            p.collected += tlvs.filter { asked.contains($0.tid) }
+            let mine = tlvs.filter { asked.contains($0.tid) }
+            // A proactive notification (e.g. EP_STATUS after a re-patch) also ends in
+            // SET_REPLY; without any echoed TLV it is not our confirmation.
+            guard !mine.isEmpty || !p.collected.isEmpty else { return }
+            p.collected += mine
             pending = p
             guard let reply = tlvs.last(where: { $0.tid == 0x0003 }), reply.value.count == 3 else { return }
             let echoed = p.tlvs.allSatisfy { p.collected.contains($0) }

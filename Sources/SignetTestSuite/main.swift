@@ -5,7 +5,8 @@ let settings = SecuritySettings()
 let transmitter = Transmitter(settings: settings)
 let receiver = Receiver(settings: settings)
 let fakeDevice = FakeDevice(settings: settings)
-let manager = Manager(settings: settings)
+// Snapshot runs get their own TUID so they never collide with a running GUI Manager on the same node.
+let manager = Manager(settings: settings, tuid: Identity.tuid(Snapshot.args.contains("--snapshot") ? "snapshot" : "manager"))
 
 /// `swift run SignetTestSuite --selftest`: exercises every part without the
 /// UI, in both security modes. Exit status 0 = all passed.
@@ -39,11 +40,16 @@ func selfTest() -> Int32 {
 }
 
 if CommandLine.arguments.contains("--selftest") { exit(selfTest()) }
+if CommandLine.arguments.contains("--probe") { exit(Manager.probe(CommandLine.arguments)) }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_: Notification) {
         NSApp.setActivationPolicy(.regular) // SwiftPM executables start as background apps
         NSApp.activate(ignoringOtherApps: true)
+        Snapshot.render = {
+            AnyView(AppView(settings: settings, transmitter: transmitter, receiver: receiver, device: fakeDevice, manager: manager))
+        }
+        Snapshot.configure(settings: settings, manager: manager)
     }
     func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool { true }
     func applicationWillTerminate(_: Notification) {

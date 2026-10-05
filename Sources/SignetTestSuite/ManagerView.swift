@@ -1,234 +1,360 @@
 import SwiftUI
 
+/// Manager tab: start, find devices, pick one, then work with it.
+/// Protocol-level controls live under Advanced (polls) and the Tools tab (raw TIDs/PIDs).
 struct ManagerView: View {
     @ObservedObject var manager: Manager
     @ObservedObject private var settings: SecuritySettings
+    @StateObject private var fixtures = FixtureStore()
     @State private var selected: String?
-    @State private var tab = "Info"
-    @State private var pollKind = "Broadcast"
-    @State private var level: UInt8 = 2
-    @State private var lo = "000000000000"
-    @State private var hi = "FFFFFFFFFFFF"
-    @State private var pollEP = "65535"
+    @State private var tab = Snapshot.arg("--manager-tab") ?? "Overview"
+    @State private var showAdvanced = false
 
     init(manager: Manager) {
         self.manager = manager
         settings = manager.settings
     }
 
+    private var devices: [ManagerDevice] {
+        manager.devices.values.sorted { ManagerLabels.displayName($0).localizedStandardCompare(ManagerLabels.displayName($1)) == .orderedAscending }
+    }
     private var device: ManagerDevice? { selected.flatMap { manager.devices[$0] } }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Button(manager.running ? "Stop" : "Start") { manager.running ? manager.stop() : manager.start() }
-                    .disabled(!manager.running && !settings.ready)
-                Toggle("Heartbeat poll (3 s)", isOn: $manager.heartbeat)
-                Toggle("Unicast commands", isOn: $manager.unicast)
-                    .help("Off: send to 239.254.255.251. Retries always go multicast.")
-                TextField("Interface IPv4 (default)", text: $manager.interface)
-                    .frame(width: 170).disabled(manager.running)
-            }
-            Text(manager.status).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-            pollBar.disabled(!manager.running)
+        VStack(alignment: .leading, spacing: 10) {
+            topBar
+            if showAdvanced { ManagerAdvancedBar(manager: manager, selected: selected) }
             HSplitView {
-                List(manager.devices.values.sorted { $0.id < $1.id }, selection: $selected) { d in
-                    VStack(alignment: .leading) {
-                        Text(d.id).font(.body.monospaced())
-                        Text("\(d.model.isEmpty ? "?" : d.model) · \(d.state)").font(.caption)
-                            .foregroundStyle(d.anomaly.isEmpty ? Color.secondary : .red)
-                    }
-                    .accessibilityElement(children: .combine)
-                    .tag(d.id)
-                }
-                .frame(minWidth: 200, idealWidth: 230)
-                .accessibilityLabel("Discovered devices")
-                VStack(alignment: .leading) {
-                    Picker("View", selection: $tab) {
-                        ForEach(["Info", "Parameters", "RDM", "Log"], id: \.self) { Text($0) }
-                    }
-                    .pickerStyle(.segmented).labelsHidden()
-                    switch tab {
-                    case "Log": ManagerLogView(manager: manager, filter: selected)
-                    case _ where device == nil: Text("Select a device").foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
-                    case "Parameters": ManagerParamsView(manager: manager, device: device!)
-                    case "RDM": ManagerRDMView(manager: manager, device: device!)
-                    default: ManagerInfoView(manager: manager, device: device!)
+                deviceList.frame(minWidth: 210, idealWidth: 240, maxWidth: 320)
+                Group {
+                    if let device {
+                        ManagerDeviceDetail(manager: manager, device: device, fixtures: fixtures, tab: $tab)
+                    } else {
+                        placeholder(manager.running ? "Select a device" : "Start the Manager to find devices",
+                                    detail: manager.running ? nil : "Uses the security settings above.")
                     }
                 }
-                .padding(.leading, 6)
-                .frame(minWidth: 420)
+                .frame(minWidth: 460, maxWidth: .infinity, maxHeight: .infinity)
             }
+        }
+        .onAppear(perform: selectFirstIfNeeded)
+        .onChange(of: manager.devices.count) { _ in selectFirstIfNeeded() }
+    }
+
+    private func selectFirstIfNeeded() {
+        if selected == nil || manager.devices[selected!] == nil { selected = devices.first?.id }
+    }
+
+    private var topBar: some View {
+        HStack(spacing: 12) {
+            if manager.running {
+                Button("Stop") { manager.stop() }
+            } else {
+                Button("Start Manager") { manager.start() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!settings.ready)
+                ManagerInterfacePicker(manager: manager)
+            }
+            Button("Find devices") { manager.poll(level: 2, ep: 0xFFFF) }
+                .disabled(!manager.running)
+                .help("Broadcast poll at full detail")
+            Text(manager.running ? manager.status : "Stopped")
+                .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            Spacer()
+            Toggle("Advanced", isOn: $showAdvanced).toggleStyle(.button)
         }
     }
 
-    private var pollBar: some View {
-        HStack {
-            Picker("Poll", selection: $pollKind) {
-                ForEach(["Broadcast", "Range", "Targeted"], id: \.self) { Text($0) }
+    private var deviceList: some View {
+        List(devices, selection: $selected) { d in
+            HStack(alignment: .top, spacing: 8) {
+                Circle().fill(statusColor(d)).frame(width: 8, height: 8).padding(.top, 5)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(ManagerLabels.displayName(d)).fontWeight(.medium)
+                    Text([d.model, d.ip].filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.caption).foregroundStyle(.secondary)
+                    if !d.anomaly.isEmpty { Text("Needs attention").font(.caption).foregroundStyle(.red) }
+                }
             }
-            .frame(width: 170)
-            if pollKind != "Broadcast" {
-                TextField("TUID lo", text: $lo).frame(width: 110).font(.body.monospaced())
-                if pollKind == "Range" { TextField("TUID hi", text: $hi).frame(width: 110).font(.body.monospaced()) }
-            }
-            Picker("Level", selection: $level) {
-                Text("0 Heartbeat").tag(UInt8(0)); Text("1 Config").tag(UInt8(1))
-                Text("2 Full").tag(UInt8(2)); Text("3 Extended").tag(UInt8(3))
-            }
-            .frame(width: 170)
-            TextField("EP", text: $pollEP).frame(width: 55).help("0 root, 65535 all endpoints")
-            Button("Poll") {
-                let target = pollKind == "Targeted" ? (selected ?? lo) : lo
-                let l = pollKind == "Broadcast" ? [UInt8](repeating: 0, count: 6) : (mgrBytes(hex: target) ?? [])
-                let h = pollKind == "Broadcast" ? [UInt8](repeating: 0xFF, count: 6) : pollKind == "Targeted" ? l : (mgrBytes(hex: hi) ?? [])
-                guard l.count == 6, h.count == 6 else { return }
-                let ip = pollKind == "Targeted" && manager.unicast ? manager.devices[Identity.hex(l)]?.ip : nil
-                manager.poll(lo: l, hi: h, level: level, ep: UInt16(pollEP) ?? 0xFFFF, to: ip)
+            .padding(.vertical, 2)
+            .accessibilityElement(children: .combine)
+            .accessibilityValue(d.state)
+            .tag(d.id)
+        }
+        .overlay {
+            if devices.isEmpty {
+                placeholder(manager.running ? "No devices yet" : "Not running",
+                            detail: manager.running ? "Press Find devices, or check the interface and passphrase." : nil)
             }
         }
+        .accessibilityLabel("Devices")
+    }
+
+    private func placeholder(_ title: String, detail: String?) -> some View {
+        VStack(spacing: 6) {
+            Text(title).font(.headline).foregroundStyle(.secondary)
+            if let detail { Text(detail).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center) }
+        }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
-private struct ManagerInfoView: View {
+func statusColor(_ d: ManagerDevice) -> Color {
+    if !d.anomaly.isEmpty { return .red }
+    if d.state.hasPrefix("Online") { return .green }
+    if d.state == "Beacon" { return .gray }
+    return .orange
+}
+
+/// Local IPv4 interfaces for multicast; "Automatic" leaves it to the OS.
+private struct ManagerInterfacePicker: View {
+    @ObservedObject var manager: Manager
+    private let interfaces = localIPv4Interfaces()
+
+    var body: some View {
+        Picker("Network", selection: $manager.interface) {
+            Text("Automatic").tag("")
+            ForEach(interfaces, id: \.ip) { Text("\($0.name) · \($0.ip)").tag($0.ip) }
+            if !manager.interface.isEmpty, !interfaces.contains(where: { $0.ip == manager.interface }) {
+                Text(manager.interface).tag(manager.interface)
+            }
+        }
+        .frame(maxWidth: 240)
+        .help("The network the devices are on")
+    }
+}
+
+func localIPv4Interfaces() -> [(name: String, ip: String)] {
+    var out: [(String, String)] = []
+    var head: UnsafeMutablePointer<ifaddrs>?
+    guard getifaddrs(&head) == 0 else { return [] }
+    defer { freeifaddrs(head) }
+    var p = head
+    while let i = p?.pointee {
+        defer { p = i.ifa_next }
+        guard let sa = i.ifa_addr, sa.pointee.sa_family == UInt8(AF_INET), i.ifa_flags & UInt32(IFF_LOOPBACK) == 0 else { continue }
+        var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+        guard getnameinfo(sa, socklen_t(sa.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 else { continue }
+        out.append((String(cString: i.ifa_name), String(cString: host)))
+    }
+    return out
+}
+
+/// Poll options and engine switches most people never need.
+private struct ManagerAdvancedBar: View {
+    @ObservedObject var manager: Manager
+    let selected: String?
+    @State private var kind = "Broadcast"
+    @State private var level: UInt8 = 2
+    @State private var lo = "000000000000"
+    @State private var hi = "FFFFFFFFFFFF"
+    @State private var ep = "65535"
+
+    var body: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 16) {
+                    Toggle("Heartbeat poll every 3 s", isOn: $manager.heartbeat)
+                    Toggle("Send commands by unicast", isOn: $manager.unicast)
+                        .help("Off: commands go to multicast 239.254.255.251. Retries always go multicast.")
+                }
+                HStack {
+                    Picker("Poll", selection: $kind) {
+                        ForEach(["Broadcast", "Range", "Selected device"], id: \.self) { Text($0) }
+                    }
+                    .frame(width: 210)
+                    if kind == "Range" {
+                        TextField("From TUID", text: $lo).frame(width: 120).font(.body.monospaced())
+                        TextField("To TUID", text: $hi).frame(width: 120).font(.body.monospaced())
+                    }
+                    Picker("Detail", selection: $level) {
+                        Text("Heartbeat").tag(UInt8(0)); Text("Config").tag(UInt8(1))
+                        Text("Full").tag(UInt8(2)); Text("Extended").tag(UInt8(3))
+                    }
+                    .frame(width: 170)
+                    TextField("Endpoint", text: $ep).frame(width: 70).help("0 root, 65535 all endpoints")
+                    Button("Send poll", action: send).disabled(!manager.running || (kind == "Selected device" && selected == nil))
+                }
+            }
+            .padding(4)
+        }
+    }
+
+    private func send() {
+        var l = [UInt8](repeating: 0, count: 6), h = [UInt8](repeating: 0xFF, count: 6), ip: String?
+        switch kind {
+        case "Range":
+            guard let a = mgrBytes(hex: lo), let b = mgrBytes(hex: hi), a.count == 6, b.count == 6 else { return }
+            (l, h) = (a, b)
+        case "Selected device":
+            guard let id = selected, let d = manager.devices[id] else { return }
+            (l, h) = (d.tuid, d.tuid)
+            ip = manager.unicast ? d.ip : nil
+        default: break
+        }
+        manager.poll(lo: l, hi: h, level: level, ep: UInt16(ep) ?? 0xFFFF, to: ip)
+    }
+}
+
+/// Header plus Overview / Settings / Fixtures / Traffic / Tools for one device.
+private struct ManagerDeviceDetail: View {
     @ObservedObject var manager: Manager
     let device: ManagerDevice
+    @ObservedObject var fixtures: FixtureStore
+    @Binding var tab: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(ManagerLabels.displayName(device)).font(.title2.weight(.semibold))
+                    Text([device.model, device.ip, device.id].filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+                }
+                Spacer()
+                Label(device.state, systemImage: "circle.fill")
+                    .labelStyle(.titleAndIcon).font(.callout)
+                    .foregroundStyle(statusColor(device))
+                authBadge
+            }
+            if !device.anomaly.isEmpty {
+                Label(device.anomaly, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red).textSelection(.enabled)
+            }
+            Picker("View", selection: $tab) {
+                ForEach(["Overview", "Settings", "Fixtures", "Traffic", "Tools"], id: \.self) { Text($0) }
+            }
+            .pickerStyle(.segmented).labelsHidden()
+            switch tab {
+            case "Settings": ManagerSettingsView(manager: manager, device: device)
+            case "Fixtures": ManagerFixturesView(manager: manager, device: device, store: fixtures)
+            case "Traffic": ManagerTrafficView(manager: manager, device: device)
+            case "Tools": ManagerToolsView(manager: manager, device: device)
+            default: ManagerOverviewView(manager: manager, device: device)
+            }
+        }
+        .padding(.leading, 8)
+    }
+
+    private var authBadge: some View {
+        let (text, icon, color): (String, String, Color) = switch device.auth {
+        case "OK": ("Verified", "lock.fill", .green)
+        case let a where a.hasPrefix("Open"): ("Unauthenticated", "lock.open.fill", .orange)
+        case let a where a.hasPrefix("none"): ("Beacon", "dot.radiowaves.left.and.right", .gray)
+        case "": ("—", "lock", .secondary)
+        default: ("Check failed", "lock.trianglebadge.exclamationmark.fill", .red)
+        }
+        return Label(text, systemImage: icon).font(.callout).foregroundStyle(color)
+            .help("Last reply: \(device.auth)")
+    }
+}
+
+private struct ManagerOverviewView: View {
+    @ObservedObject var manager: Manager
+    let device: ManagerDevice
+    @State private var events: [ManagerTLV] = []
+    @State private var eventsNote = ""
 
     var body: some View {
         Form {
-            if !device.anomaly.isEmpty { Text("⚠︎ \(device.anomaly)").foregroundStyle(.red) }
-            LabeledContent("TUID", value: device.id)
-            LabeledContent("IP", value: device.ip)
-            LabeledContent("State", value: device.state)
-            LabeledContent("Last auth", value: device.auth)
-            LabeledContent("Last seen", value: device.lastSeen.formatted(date: .omitted, time: .standard))
-            LabeledContent("Model", value: device.model)
-            LabeledContent("Label", value: device.label)
-            LabeledContent("Roles", value: device.roles)
-            LabeledContent("Endpoints", value: device.text(0x0602))
-            LabeledContent("Firmware", value: device.text(0x0604))
-            LabeledContent("Protocol version", value: device.text(0x0603))
-            LabeledContent("SoemCode", value: String(format: "0x%08X", device.soem))
-            LabeledContent("CHANGE_COUNT", value: device.changeCount.map(String.init) ?? "–")
-            LabeledContent("Status", value: device.text(0x0608))
-            LabeledContent("OTW capability (raw)", value: device.root(0x060D).map(mgrHex) ?? "–")
-            HStack {
-                Button("Targeted full poll") {
-                    manager.poll(lo: device.tuid, hi: device.tuid, level: 2, ep: 0xFFFF, to: manager.unicast ? device.ip : nil)
+            Section("Device") {
+                row(0x060B); row(0x0605); row(0x0604); row(0x0609); row(0x0602)
+            }
+            Section("Connection") {
+                LabeledContent("Address", value: device.ip.isEmpty ? "—" : device.ip)
+                LabeledContent("Authentication", value: ManagerLabels.auth(device.auth))
+                LabeledContent("Last seen", value: device.lastSeen.formatted(.relative(presentation: .named)))
+                LabeledContent("Change count", value: device.changeCount.map(String.init) ?? "—")
+                    .help("Goes up each time a saved setting changes")
+            }
+            Section("Health") {
+                row(0x0608)
+                LabeledContent("Security events") {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        if events.isEmpty { Text(eventsNote.isEmpty ? "—" : eventsNote).foregroundStyle(.secondary) }
+                        ForEach(events, id: \.self) { e in
+                            let code = mgrU16(e.value), count = mgrU32(e.value.dropFirst(2))
+                            Text("\(ManagerLabels.eventNames[code] ?? String(format: "Code 0x%04X", code)): \(count)")
+                                .foregroundStyle(count > 0 ? .orange : .secondary)
+                        }
+                    }
                 }
-                Button("Forget TUID") { manager.forget(device.id) }
-                    .help("Drop the device and its replay state (after a rekey, §8.3)")
+            }
+            Section("Identifiers") {
+                LabeledContent("TUID", value: device.id)
+                LabeledContent("SoemCode", value: String(format: "0x%08X", device.soem))
+                row(0x0603)
+            }
+            Section {
+                HStack {
+                    Button("Refresh") { refresh() }.disabled(manager.busy)
+                    Button("Check security events") { loadEvents() }.disabled(manager.busy)
+                    Spacer()
+                    Button("Forget device", role: .destructive) { manager.forget(device.id) }
+                        .help("Drop it from the list and clear its replay state, e.g. after it was re-keyed")
+                }
             }
         }
+        .formStyle(.grouped)
         .textSelection(.enabled)
+        .onAppear { if events.isEmpty, !manager.busy { loadEvents() } }
     }
-}
 
-private struct ManagerParamsView: View {
-    @ObservedObject var manager: Manager
-    let device: ManagerDevice
-    @State private var ep = "0"
-    @State private var tid: UInt16? = 0x0605
-    @State private var value = ""
+    private func row(_ tid: UInt16) -> some View {
+        LabeledContent(ManagerLabels.title(tid), value: device.root(tid).map { ManagerLabels.value(tid, $0) } ?? "—")
+    }
 
-    var body: some View {
-        VStack(alignment: .leading) {
-            Table(ManagerTID.all, selection: $tid) {
-                TableColumn("TID", value: \.hex).width(60)
-                TableColumn("Name", value: \.name)
-                TableColumn("Family", value: \.family).width(70)
-                TableColumn("Ops") { Text(($0.get ? "G" : "") + ($0.set ? "S" : "") + " " + $0.scope) }.width(45)
-                TableColumn("Value layout", value: \.layout)
-            }
-            .frame(minHeight: 180)
-            HStack {
-                TextField("Endpoint", text: $ep).frame(width: 70).help("0 root, 1…n data, 65535 broadcast")
-                TextField("SET value (labels: text, numbers: decimal/0x, IPv4: dotted, else hex; 'hex:' forces hex)", text: $value)
-                Button("GET") { if let t = tid { manager.get(device.tuid, ep: UInt16(ep) ?? 0, tids: [t]) } }
-                    .disabled(!(tid.flatMap { ManagerTID.byTID[$0]?.get } ?? false) || manager.busy)
-                Button("SET") {
-                    guard let t = tid, let v = ManagerTID.parse(t, value) else { return }
-                    manager.set(device.tuid, ep: UInt16(ep) ?? 0, tlvs: [ManagerTLV(tid: t, value: v)])
-                }
-                .disabled(!(tid.flatMap { ManagerTID.byTID[$0]?.set } ?? false) || manager.busy
-                    || tid.flatMap { ManagerTID.parse($0, value) } == nil)
-            }
-            Text(manager.result).font(.callout).textSelection(.enabled)
-            Text("Cached values, EP \(ep)").font(.headline)
-            List((device.params[UInt16(ep) ?? 0] ?? [:]).sorted { $0.key < $1.key }, id: \.key) { kv in
-                Text("\(ManagerTID.name(kv.key)): \(ManagerTID.describe(kv.key, kv.value))").textSelection(.enabled)
-            }
+    private func refresh() {
+        manager.poll(lo: device.tuid, hi: device.tuid, level: 3, ep: 0xFFFF, to: manager.unicast ? device.ip : nil)
+    }
+
+    private func loadEvents() {
+        eventsNote = "Checking…"
+        manager.get(device.tuid, ep: 0, tids: [0xFF01]) { r in
+            events = r.tlvs.filter { $0.tid == 0xFF01 && $0.value.count >= 6 }
+            eventsNote = r.ok ? (events.isEmpty ? "None reported" : "") : "Not supported or no reply"
         }
     }
 }
 
-private struct ManagerRDMView: View {
+private struct ManagerTrafficView: View {
     @ObservedObject var manager: Manager
     let device: ManagerDevice
-    @State private var ep = "1"
-    @State private var uid = ""
-    @State private var pid: UInt16 = 0x0060
-    @State private var data = ""
-
-    var body: some View {
-        let e = UInt16(ep) ?? 1
-        VStack(alignment: .leading) {
-            HStack {
-                TextField("Endpoint", text: $ep).frame(width: 70)
-                Button("Request ToD") { manager.requestToD(device.tuid, ep: e) }.disabled(manager.busy)
-                Picker("UID", selection: $uid) {
-                    Text("–").tag("")
-                    ForEach((device.tod[e] ?? []).map(Identity.hex), id: \.self) { Text($0).tag($0) }
-                }
-                .frame(width: 220)
-            }
-            HStack {
-                Picker("PID", selection: $pid) {
-                    ForEach(ManagerRDM.pids.sorted { $0.key < $1.key }, id: \.key) { Text($0.value).tag($0.key) }
-                }
-                .frame(width: 260)
-                TextField("SET data (text for labels, else hex)", text: $data)
-                Button("GET") { send(set: false) }
-                Button("SET") { send(set: true) }
-            }
-            .disabled(uid.isEmpty || manager.busy)
-            Text(manager.result).font(.callout).textSelection(.enabled)
-            Text("RDM responses seen").font(.headline)
-            List(device.rdm.reversed(), id: \.self) { Text($0).font(.caption.monospaced()).textSelection(.enabled) }
-        }
-    }
-
-    private func send(set: Bool) {
-        guard let dest = mgrBytes(hex: uid) else { return }
-        let pd = !set ? [] : (pid == 0x0082 ? Array(data.utf8.prefix(32)) : mgrBytes(hex: data) ?? [])
-        manager.rdm(device.tuid, ep: UInt16(ep) ?? 1, dest: dest, set: set, pid: pid, pd: pd)
-    }
-}
-
-private struct ManagerLogView: View {
-    @ObservedObject var manager: Manager
-    let filter: String?
-    @State private var onlySelected = false
+    @State private var everything = false
 
     var body: some View {
         VStack(alignment: .leading) {
             HStack {
-                Toggle("Only selected device", isOn: $onlySelected).disabled(filter == nil)
+                Toggle("Show all devices", isOn: $everything)
                 Spacer()
                 Button("Clear") { manager.clearLog() }
             }
-            List(manager.log.reversed().filter { !onlySelected || filter == nil || $0.sender.hasPrefix(filter!) || $0.uri.contains(filter!) }) { e in
+            List(manager.log.reversed().filter { everything || $0.sender.hasPrefix(device.id) || $0.uri.contains(device.id) }) { e in
                 DisclosureGroup {
                     Text(e.tlvs).font(.caption.monospaced())
+                    Text("\(e.peer) · \(e.sender) · \(e.mode) · \(e.lane)").font(.caption.monospaced()).foregroundStyle(.secondary)
                     Text(e.hex).font(.caption2.monospaced()).foregroundStyle(.secondary)
                 } label: {
-                    Text("\(e.time.formatted(date: .omitted, time: .standard)) \(e.tx ? "→" : "←") \(e.peer) \(e.uri)  \(e.sender) \(e.mode) \(e.lane) auth: \(e.auth)")
-                        .font(.caption.monospaced())
-                        .foregroundStyle(e.auth.hasPrefix("FAIL") || e.auth.hasPrefix("REPLAY") || e.auth.hasPrefix("MAL") ? .red : .primary)
+                    HStack(spacing: 8) {
+                        Text(e.time.formatted(date: .omitted, time: .standard)).monospacedDigit().foregroundStyle(.secondary)
+                        Image(systemName: e.tx ? "arrow.up.right" : "arrow.down.left")
+                            .foregroundStyle(e.tx ? Color.sigNet : .primary)
+                            .accessibilityLabel(e.tx ? "Sent" : "Received")
+                        Text(e.uri.split(separator: "/").dropFirst(3).joined(separator: "/")).font(.callout.monospaced())
+                        Text(e.tlvs).lineLimit(1).foregroundStyle(.secondary)
+                        Spacer()
+                        if !e.tx { Text(e.auth).font(.caption).foregroundStyle(trafficAuthColor(e.auth)) }
+                    }
+                    .font(.callout)
                 }
                 .textSelection(.enabled)
-                .accessibilityLabel("\(e.tx ? "Sent" : "Received") \(e.uri), auth \(e.auth)")
             }
         }
     }
+}
+
+private func trafficAuthColor(_ auth: String) -> Color {
+    auth == "OK" ? .green : (auth.hasPrefix("FAIL") || auth.hasPrefix("REPLAY") || auth.hasPrefix("MAL")) ? .red : .secondary
 }

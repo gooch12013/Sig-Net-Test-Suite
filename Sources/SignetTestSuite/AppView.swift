@@ -17,6 +17,7 @@ struct AppView: View {
     let receiver: Receiver
     let device: FakeDevice
     let manager: Manager
+    @State private var tab = Snapshot.launchTab
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -28,15 +29,16 @@ struct AppView: View {
                     .frame(height: 30)
                     .accessibilityLabel("Sig-Net")
                 Text("Test Suite").font(.title2.weight(.semibold))
+                Spacer(minLength: 24)
+                SecurityPanel(settings: settings)
             }
-            .padding([.horizontal, .top])
-            SecurityPanel(settings: settings).padding()
+            .padding()
             Divider()
-            TabView {
-                TransmitView(tx: transmitter).tabItem { Text("Transmit") }
-                ReceiveView(rx: receiver).tabItem { Text("Receive") }
-                DeviceView(device: device).tabItem { Text("Device") }
-                ManagerView(manager: manager).tabItem { Text("Manager") }
+            TabView(selection: $tab) {
+                TransmitView(tx: transmitter).tabItem { Text("Transmit") }.tag("transmit")
+                ReceiveView(rx: receiver).tabItem { Text("Receive") }.tag("receive")
+                DeviceView(device: device).tabItem { Text("Device") }.tag("device")
+                ManagerView(manager: manager).tabItem { Text("Manager") }.tag("manager")
             }
             .padding()
         }
@@ -50,23 +52,25 @@ struct SecurityPanel: View {
     @ObservedObject var settings: SecuritySettings
 
     var body: some View {
-        Form {
+        HStack(spacing: 10) {
             Picker("Security", selection: $settings.mode) {
                 ForEach(SecurityMode.allCases) { Text($0.rawValue).tag($0) }
             }
-            .pickerStyle(.segmented)
+            .pickerStyle(.segmented).labelsHidden().fixedSize()
+            .help("Security mode for every device the app creates")
             if settings.mode == .secure {
-                SecureField("Passphrase", text: $settings.passphrase)
-                if let problem = settings.passphraseProblem {
-                    Text(problem).font(.caption).foregroundStyle(.orange)
-                } else {
-                    Text("Passphrase OK").font(.caption).foregroundStyle(.green)
-                }
+                SecureField("Passphrase", text: $settings.passphrase).frame(minWidth: 160, maxWidth: 240)
+                    .help(settings.passphraseProblem ?? "Passphrase OK")
+                Image(systemName: settings.passphraseProblem == nil ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                    .foregroundStyle(settings.passphraseProblem == nil ? .green : .orange)
+                    .help(settings.passphraseProblem ?? "Passphrase OK")
+                    .accessibilityLabel(settings.passphraseProblem ?? "Passphrase OK")
             }
-            TextField("Scope", text: $settings.scope)
+            TextField("Scope", text: $settings.scope).frame(width: 110).help("Scope (local if empty)")
             if settings.locked {
-                Text("Stop every running device to change security settings.")
-                    .font(.caption).foregroundStyle(.secondary)
+                Image(systemName: "lock.fill").foregroundStyle(.secondary)
+                    .help("Stop every running device to change security settings")
+                    .accessibilityLabel("Locked while devices are running")
             }
         }
         .disabled(settings.locked)
