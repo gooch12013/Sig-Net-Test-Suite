@@ -140,7 +140,6 @@ final class FirmwareUpdate {
             var c = try poll(FTC.getCommand, FTC.PID.commit, commitPD, min: 15)
             guard c[0] == FTC.RS.statusOK else { throw fail(.status, "GET:FTC_COMMIT") }
             progress(.committing, UInt32(file.count))
-            sessionOpen = false // after SET:FTC_COMMIT only a refusal reopens it for a cancel (§9.5)
             c = try poll(FTC.setCommand, FTC.PID.commit, commitPD, min: 15)
             guard c[0] == FTC.RS.statusOK else { sessionOpen = true; throw fail(.status, "SET:FTC_COMMIT") }
             result.commitTime = result.data
@@ -310,7 +309,8 @@ final class FirmwareUpdate {
     /// ACK_TIMER is the transport's job ([RDM] proxies, §5.5); here it ends the transfer.
     private func ask(_ cc: UInt8, _ pid: UInt16, _ pd: [UInt8], min: Int = 5) throws -> Reply {
         if stopping { throw Code.cancelled }
-        if cc == FTC.setCommand, pid == FTC.PID.commit { lock.lock(); commitSent = true; lock.unlock() }
+        // Once SET:FTC_COMMIT is on its way, only a refusal reopens the session for a cancel (§9.5).
+        if cc == FTC.setCommand, pid == FTC.PID.commit { lock.lock(); commitSent = true; lock.unlock(); sessionOpen = false }
         sentLog?(cc, pid, pd)
         let what = "\(cc == FTC.setCommand ? "SET" : "GET") PID 0x\(String(pid, radix: 16))"
         guard let r = transport(cc, pid, pd) else { throw fail(.noReply, "no reply to \(what)") }
