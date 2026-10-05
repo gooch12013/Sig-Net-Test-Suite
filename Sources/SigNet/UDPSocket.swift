@@ -10,7 +10,7 @@ import Glibc
 #if os(Windows)
 private typealias Handle = SOCKET
 private let invalidHandle = ~SOCKET(0) // INVALID_SOCKET (a cast macro Swift cannot import)
-private let ipproto = Int32(IPPROTO_IP.rawValue), udp = Int32(IPPROTO_UDP.rawValue), dgram = SOCK_DGRAM
+private let ipproto: Int32 = 0, udp: Int32 = 17, dgram = SOCK_DGRAM // IPPROTO_IP/UDP: WinSDK imports them inconsistently
 private func lastError() -> String { "WSA error \(WSAGetLastError())" }
 private func closeHandle(_ h: Handle) { closesocket(h) }
 private let wsaStarted: Bool = { var d = WSADATA(); return WSAStartup(0x0202, &d) == 0 }()

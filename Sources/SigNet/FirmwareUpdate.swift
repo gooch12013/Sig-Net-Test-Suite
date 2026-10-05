@@ -225,9 +225,10 @@ public final class FirmwareUpdate {
                 if r.type == FTC.ack { break }
             }
             let text = { (b: ArraySlice<UInt8>) in String(decoding: b.prefix { $0 != 0 }, as: UTF8.self).trimmingCharacters(in: .whitespaces) }
-            files = stride(from: 0, to: list.count - 42, by: 43).map { i in // §13.5.2: 43-byte entries
-                FixtureFile(id: list[i], capabilities: mgrU32(list[(i + 1)...]), size: 0,
-                            description: text(list[(i + 5)..<(i + 37)]), suffix: text(list[(i + 37)..<(i + 43)]))
+            files = stride(from: 0, to: list.count - 42, by: 43).map { (i: Int) -> FixtureFile in // §13.5.2: 43-byte entries
+                let caps: UInt32 = mgrU32(list[(i + 1)...])
+                let description: String = text(list[(i + 5)..<(i + 37)]), suffix: String = text(list[(i + 37)..<(i + 43)])
+                return FixtureFile(id: list[i], capabilities: caps, size: 0, description: description, suffix: suffix)
             }
         }
         // Size: a download's File Size is the file's; an upload's is what the fixture can take (§13.1.2).
