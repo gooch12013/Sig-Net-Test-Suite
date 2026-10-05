@@ -38,8 +38,10 @@ func selfTest() -> Int32 {
             tx.stop()
         }
         report("receive \(tag)", Receiver.selfTest(settings: s))
-        report("device \(tag)", FakeDevice.selfTest(settings: s))
-        report("manager \(tag)", Manager.selfTest(settings: s))
+        let device = DeviceEngine.selfTest(settings: s)
+        report("device \(tag)", device == nil, device ?? "")
+        let manager = ManagerEngine.knownAnswers() ?? ManagerEngine.deviceLoopTest(settings: s)
+        report("manager \(tag)", manager == nil, manager ?? "")
         for (l, ok, d) in LoopbackTests.run(settings: s) { report("\(l) \(tag)", ok, d) }
     }
     return failed ? 1 : 0
