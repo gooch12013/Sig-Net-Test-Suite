@@ -171,6 +171,8 @@ private struct ManagerFixturePanel: View {
     let port: UInt16
     let uid: String
     @ObservedObject var store: FixtureStore
+    @EnvironmentObject private var tx: Transmitter
+    @State private var picking: UInt16?   // channel slot whose value list is open
 
     private static let core: [UInt16] = [0x0082, 0x00F0, 0x1000, 0x00E0]
     private static let details: [UInt16] = [0x0080, 0x0081, 0x0070, 0x00C0, 0x00C2, 0x00C1]
@@ -215,8 +217,10 @@ private struct ManagerFixturePanel: View {
                     Text(f.footprint.map { "\($0) channels. Press Read channels for what each one does." } ?? "Press Read channels for what each one does.")
                         .font(.system(size: 12)).foregroundStyle(Color.silk)
                 }
-                ForEach(f.channels.keys.sorted(), id: \.self) { slot in
-                    ReadoutRow(label: "Channel \(Int(slot) + 1)", value: f.channels[slot])
+                ForEach(f.channels.keys.sorted(), id: \.self) { slot in channelRow(slot) }
+                if f.activeProfile != nil, let u = f.universe, let start = f.startAddress, tx.level(universe: Int(u), channel: start) == nil {
+                    Text("Transmit doesn't send universe \(u). Add it there to pick channel values here.")
+                        .font(.system(size: 11.5)).foregroundStyle(Color.silk)
                 }
             }
             ModulePanel("Profile") {
@@ -305,6 +309,27 @@ private struct ManagerFixturePanel: View {
         }
         return ReadoutRow(label: s.name, value: current.map { RDMCatalog.show(s, $0, names: names) },
                           get: s.get ? { done in get(pid, done: done) } : nil, set: setMode, enabled: enabled)
+    }
+
+    /// The fixture's description of the channel, plus the level Transmit sends and its range name.
+    /// Click opens the profile's value list when Transmit sends this fixture's universe.
+    @ViewBuilder private func channelRow(_ slot: UInt16) -> some View {
+        let ch = f.startAddress.map { $0 + Int(slot) }
+        let u = f.universe.map(Int.init)
+        let level = u.flatMap { u in ch.flatMap { tx.level(universe: u, channel: $0) } }
+        let profiled = f.activeProfile?.channels.first { $0.ch == Int(slot) + 1 }
+        let range = level.flatMap { l in profiled?.ranges.first { ($0.from...$0.to).contains(l) } }
+        let value = [f.channels[slot], level.map { "\($0)" + (range.map { " · \($0.name)" } ?? "") }].compactMap { $0 }.joined(separator: " · level ")
+        if let profiled, let level, let u, let ch {
+            ReadoutRow(label: "Channel \(Int(slot) + 1)", value: value)
+                .contentShape(Rectangle())
+                .onTapGesture { picking = slot }
+                .valuePicker(profiled, level: level, open: Binding(get: { picking == slot }, set: { picking = $0 ? slot : nil })) {
+                    tx.setLevel(universe: u, channel: ch, to: $0)
+                }
+        } else {
+            ReadoutRow(label: "Channel \(Int(slot) + 1)", value: value)
+        }
     }
 
     private func sensorRow(_ n: UInt8) -> ReadoutRow {

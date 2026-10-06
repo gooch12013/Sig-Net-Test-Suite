@@ -32,7 +32,7 @@ struct AppView: View {
                 switch tab {
                 case "receive": ReceiveView(rx: receiver).environment(\.readoutKeyColumns, 1)
                 case "device": DeviceView(device: device).environment(\.readoutKeyColumns, 1)
-                case "manager": ManagerView(manager: manager, fixtures: fixtures)
+                case "manager": ManagerView(manager: manager, fixtures: fixtures).environmentObject(transmitter) // channel value picker
                 default: TransmitView(tx: transmitter, fixtures: fixtures).environment(\.readoutKeyColumns, 1)
                 }
             }

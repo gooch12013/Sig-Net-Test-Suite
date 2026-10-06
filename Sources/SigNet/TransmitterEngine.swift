@@ -166,6 +166,24 @@ open class TransmitterEngine {
 
     private func pushAll() { (0..<count).forEach(push) }
 
+    /// Level of `channel` (1–512) in universe `u`; nil when this sender doesn't send `u`.
+    public func level(universe u: Int, channel: Int) -> UInt8? {
+        let i = u - universe
+        guard (0..<count).contains(i), (1...512).contains(channel) else { return nil }
+        return bank[i][channel - 1]
+    }
+
+    /// Sets `channel` (1–512) in universe `u`; false when this sender doesn't send `u`.
+    @discardableResult public func setLevel(universe u: Int, channel: Int, to value: UInt8) -> Bool {
+        let i = u - universe
+        guard (0..<count).contains(i), (1...512).contains(channel) else { return false }
+        if i == selected { levels[channel - 1] = value; return true }
+        willChange()
+        bank[i][channel - 1] = value
+        push(i)
+        return true
+    }
+
     /// 30 Hz main-thread tick: test pattern, preview at 10 Hz, stats at 1 Hz.
     private func tick() {
         guard running else { return }
