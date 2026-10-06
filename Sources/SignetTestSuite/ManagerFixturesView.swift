@@ -1,5 +1,7 @@
+import AppKit
 import SigNet
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Everything learned about each RDM fixture, kept across tab switches.
 final class FixtureStore: ObservableObject {
@@ -15,6 +17,8 @@ final class FixtureStore: ObservableObject {
         var channels: [UInt16: String] = [:]            // channel offset → description
         var progress = ""
         var universe: UInt16?                           // universe of the port it was read through
+        var profile: FixtureProfile?                    // personalities and value ranges, from the fixture (FTC) or a file
+        var profileNote = ""                            // where the profile came from, or why there isn't one
 
         /// DMX start address: the last DMX_START_ADDRESS answer, else DEVICE_INFO's.
         var startAddress: Int? {
@@ -24,6 +28,11 @@ final class FixtureStore: ObservableObject {
         var label: String? { values[0x0082].map { String(decoding: $0, as: UTF8.self) } }
         var sensorCount: Int { info.map { $0.count >= 19 ? Int($0[18]) : 0 } ?? 0 }
         var footprint: Int? { info.flatMap { $0.count >= 12 ? Int(mgrU16($0[10...])) : nil } }
+        var software: String? { values[0x00C0].map { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) } }
+
+        /// Personality in use: the last PERSONALITY answer, else DEVICE_INFO's.
+        var personality: Int? { values[0x00E0]?.first.map(Int.init) ?? info.flatMap { $0.count >= 13 ? Int($0[12]) : nil } }
+        var activeProfile: FixtureProfile.Personality? { personality.flatMap { profile?.personality($0) } }
     }
     @Published var byUID: [String: Fixture] = [:]
 
@@ -47,11 +56,23 @@ final class FixtureStore: ObservableObject {
         var out: [Int: String] = [:]
         for f in byUID.values where f.universe.map(Int.init) == universe {
             guard let start = f.startAddress, start > 0 else { continue }
-            for (slot, name) in f.channels {
+            var named = f.channels
+            for c in f.activeProfile?.channels ?? [] where named[UInt16(c.ch - 1)] == nil { named[UInt16(c.ch - 1)] = c.name }
+            for (slot, name) in named {
                 let ch = start + Int(slot)
                 guard (1...512).contains(ch) else { continue }
                 out[ch] = out[ch].map { "\($0) / \(name)" } ?? name
             }
+        }
+        return out
+    }
+
+    /// DMX channel (1–512) → the profile's channel, for every fixture on `universe` with a profile for its personality.
+    func profileChannels(universe: Int) -> [Int: FixtureProfile.Channel] {
+        var out: [Int: FixtureProfile.Channel] = [:]
+        for f in byUID.values where f.universe.map(Int.init) == universe {
+            guard let start = f.startAddress, start > 0, let p = f.activeProfile else { continue }
+            for c in p.channels where (1...512).contains(start + c.ch - 1) { out[start + c.ch - 1] = c }
         }
         return out
     }
@@ -198,6 +219,27 @@ private struct ManagerFixturePanel: View {
                     ReadoutRow(label: "Channel \(Int(slot) + 1)", value: f.channels[slot])
                 }
             }
+            ModulePanel("Profile") {
+                if f.supported?.contains(0x1200) == true {
+                    Button("Read from fixture") { fetchProfile() }.buttonStyle(.softKey).disabled(!enabled || FirmwareUpdate.active)
+                        .help("Download the fixture's JSON profile over RDM file transfer")
+                }
+                Button("Open file…", action: openProfile).buttonStyle(.softKey)
+                    .help("Load a profile JSON from this Mac")
+            } content: {
+                ReadoutRow(label: "Software", value: f.software)
+                ReadoutRow(label: "Profile", value: f.profile.map { "\($0.manufacturer) \($0.model) · \($0.personalities.count) personalities" })
+                ReadoutRow(label: "Personality in use", value: f.personality.map { n in
+                    f.activeProfile.map { "\(n) · \($0.name), \($0.footprint) channels" } ?? (f.profile == nil ? "\(n)" : "\(n) · not in the profile")
+                })
+                if !f.profileNote.isEmpty {
+                    Text(f.profileNote).font(.system(size: 11.5)).foregroundStyle(Color.silk).padding(.leading, ReadoutRow.labelWidth + 8)
+                }
+                if f.activeProfile != nil {
+                    Text("Double-click a fader on the Transmit tab to pick one of its values.").font(.system(size: 11.5)).foregroundStyle(Color.silk)
+                        .padding(.leading, ReadoutRow.labelWidth + 8)
+                }
+            }
             if f.supported?.contains(0x1200) == true { ManagerFirmwarePanel(manager: manager, device: device, port: port, uid: uid, name: f.label.flatMap { $0.isEmpty ? nil : $0 } ?? "the fixture").id(uid) }
             ModulePanel("Details") {
                 ForEach(Self.details.filter { f.supported?.contains($0) ?? ($0 == 0x00C0) }, id: \.self) { row($0) }
@@ -315,6 +357,9 @@ private struct ManagerFixturePanel: View {
             runSteps((0..<(store.byUID[uid]?.sensorCount ?? 0)).map { n in { inner in readSensor(UInt8(n)) { _ in inner() } } }, then: next)
         }
         steps.append { next in loadChannels(then: next) } // channel names also label the Transmit faders
+        steps.append { next in
+            store.byUID[uid]?.profile == nil && store.byUID[uid]?.supported?.contains(0x1200) == true ? fetchProfile(then: next) : next()
+        }
         runSteps(steps) { store.byUID[uid, default: .init()].progress = "" }
     }
 
@@ -330,6 +375,60 @@ private struct ManagerFixturePanel: View {
                     next()
                 }
             } }, then: then)
+        }
+    }
+
+    // MARK: - Profile
+
+    /// FTC_FILELIST, then download the JSON file (the one naming the software version, when there are several) and load it.
+    /// Holds the app-wide transfer lock, like a firmware download.
+    private func fetchProfile(then: @escaping () -> Void = {}) {
+        guard manager.running, !FirmwareUpdate.active, let dest = mgrBytes(hex: uid) else { return then() }
+        let fixture = uid, software = f.software ?? ""
+        store.byUID[fixture, default: .init()].profileNote = "Looking for a profile on the fixture…"
+        let fw = FirmwareUpdate(transport: FirmwareUpdate.managerTransport(manager, node: device.tuid, ep: port, dest: dest, busySeconds: 300),
+                                sleep: FirmwareUpdate.realSleep)
+        FirmwareUpdate.active = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            let json = (fw.fileList() ?? []).filter { $0.suffix.lowercased() == "json" && $0.acceptsDownload && !$0.needsKey }
+            let pick = json.first { !software.isEmpty && $0.description.contains(software) } ?? json.first
+            let got = pick.map { fw.download(fileID: $0.id) }
+            DispatchQueue.main.async {
+                FirmwareUpdate.active = false
+                defer { then() }
+                guard let pick, let got else {
+                    store.byUID[fixture, default: .init()].profileNote = "The fixture offers no JSON profile to download."
+                    return
+                }
+                let (o, data) = got
+                let title = pick.description.isEmpty ? "file \(pick.id)" : pick.description
+                guard o.ok else {
+                    store.byUID[fixture, default: .init()].profileNote = "Couldn't download \(title) (file \(pick.id)): \(FirmwareUpdate.reason(o))"
+                    return
+                }
+                apply(Data(data), to: fixture, from: "\(title), downloaded from the fixture")
+            }
+        }
+    }
+
+    private func openProfile() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let data = try? Data(contentsOf: url) else {
+            store.byUID[uid, default: .init()].profileNote = "Couldn't read \(url.lastPathComponent)"
+            return
+        }
+        apply(data, to: uid, from: url.lastPathComponent)
+    }
+
+    /// Keeps the old profile when the new one fails the schema, and says why.
+    private func apply(_ data: Data, to fixture: String, from source: String) {
+        do {
+            store.byUID[fixture, default: .init()].profile = try FixtureProfile.load(data)
+            store.byUID[fixture, default: .init()].profileNote = "From \(source)"
+        } catch {
+            store.byUID[fixture, default: .init()].profileNote = "\(source) doesn't match the profile schema: \(error)"
         }
     }
 

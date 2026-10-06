@@ -15,6 +15,7 @@ public enum SelfTest {
         report("sender spec vectors", TransmitterEngine.knownAnswers())
         report("receiver spec vectors and parse path", ReceiverEngine.knownAnswers())
         report("device rdm", DeviceEngine.rdmSelfTest())
+        report("fixture profile", FixtureProfile.selfTest())
         if args.contains("--offline") { return failed ? 1 : 0 }
         let interface = args.firstIndex(of: "--interface").flatMap { args.dropFirst($0 + 1).first } ?? ""
         for mode in SecurityMode.allCases {

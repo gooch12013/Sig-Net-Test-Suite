@@ -6,6 +6,7 @@ import SwiftUI
 struct TransmitView: View {
     @ObservedObject var tx: Transmitter
     @ObservedObject var fixtures: FixtureStore
+    @State private var picking: Int?   // fader whose value list is open
 
     var body: some View {
         ScrollView {
@@ -158,6 +159,7 @@ struct TransmitView: View {
         } content: {
             let names = fixtures.channelNames(universe: tx.universe + tx.selected)
             let spans = fixtures.spans(universe: tx.universe + tx.selected)
+            let profiled = fixtures.profileChannels(universe: tx.universe + tx.selected)
             let headed = !names.isEmpty
             let bracketed = !spans.isEmpty
             HStack(alignment: .top, spacing: 12) {
@@ -172,8 +174,15 @@ struct TransmitView: View {
                     LazyHStack(alignment: .bottom, spacing: 2) {
                         ForEach(0..<tx.levels.count, id: \.self) { i in
                             VStack(spacing: 0) {
-                                if headed { heading(names[i + 1]) }
+                                if headed {
+                                    heading(names[i + 1])
+                                        .contentShape(Rectangle())
+                                        .onTapGesture { if profiled[i + 1] != nil { picking = i } }
+                                }
                                 Fader(value: channel(i), label: "\(i + 1)", name: names[i + 1].map { "Channel \(i + 1), \($0)" } ?? "Channel \(i + 1)")
+                                    .valuePicker(profiled[i + 1], level: tx.levels[i], open: Binding(get: { picking == i }, set: { picking = $0 ? i : nil })) {
+                                        tx.levels[i] = $0
+                                    }
                                 if bracketed { Color.clear.frame(width: 30, height: Self.bracketHeight) }
                             }
                             .padding(.leading, i > 0 && i % 8 == 0 ? 10 : 0) // gap every 8, like a console bank
@@ -347,6 +356,63 @@ struct Fader: View {
     }
 }
 
+
+extension View {
+    /// Double-click opens the profile channel's named ranges; clicking one sets the level to the start of that range.
+    @ViewBuilder func valuePicker(_ channel: FixtureProfile.Channel?, level: UInt8, open: Binding<Bool>, set: @escaping (UInt8) -> Void) -> some View {
+        if let channel {
+            self.simultaneousGesture(TapGesture(count: 2).onEnded { open.wrappedValue = true })
+                .help("\(channel.name): double-click to pick a value")
+                .accessibilityAction(named: "Choose a value") { open.wrappedValue = true }
+                .popover(isPresented: open, arrowEdge: .top) {
+                    ValueList(channel: channel, level: level) { set($0); open.wrappedValue = false }
+                }
+        } else {
+            self
+        }
+    }
+}
+
+/// One channel's named ranges; the one holding the current level is lit.
+private struct ValueList: View {
+    let channel: FixtureProfile.Channel
+    let level: UInt8
+    let choose: (UInt8) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(channel.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(Color.ink)
+            if let note = channel.note { Text(note).font(.system(size: 11.5)).foregroundStyle(Color.silk) }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(channel.ranges, id: \.self) { r in
+                        let lit = (r.from...r.to).contains(level)
+                        Button { choose(r.from) } label: {
+                            HStack(spacing: 10) {
+                                Lamp(color: lit ? .lampLatch : nil)
+                                Text(r.from == r.to ? "\(r.from)" : "\(r.from)–\(r.to)")
+                                    .font(.system(size: 11, design: .monospaced).monospacedDigit()).foregroundStyle(Color.silk)
+                                    .frame(width: 58, alignment: .leading)
+                                Text(r.name).font(.system(size: 12.5)).foregroundStyle(Color.ink)
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(lit ? Color.readoutWindow : .clear))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("\(r.name), \(r.from) to \(r.to)")
+                        .accessibilityAddTraits(lit ? .isSelected : [])
+                    }
+                }
+            }
+            .frame(maxHeight: 360)
+        }
+        .padding(12)
+        .frame(width: 280)
+        .background(Color.module)
+    }
+}
 
 /// A box without its top: down-strokes at a fixture's first and last channel, joined underneath, its name in the middle.
 private struct FixtureBracket: View {
