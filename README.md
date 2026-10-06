@@ -23,17 +23,70 @@ SNOW (over-the-wire onboarding) is not implemented. See `docs/snow-summary.md`.
 
 ## Build and run
 
-There is no library to build. You need Swift 5.10 or later.
+There is nothing to build besides this package. The first build downloads
+[swift-crypto](https://github.com/apple/swift-crypto), so it needs internet
+access once.
+
+### 1. Install Swift
+
+- **macOS 13 or later:** install Xcode 15.3 or later from the App Store, or
+  just the command line tools with `xcode-select --install`. Swift 5.10 or later.
+- **Linux:** install a Swift toolchain from [swift.org/install](https://www.swift.org/install/).
+  CI builds with Swift 6.4 (the `swift:6.4` Docker image).
+- **Windows:** install Swift from [swift.org/install](https://www.swift.org/install/),
+  which also installs the Visual Studio build tools it needs. CI builds with
+  Swift 6.4.
+
+Check with `swift --version`.
+
+### 2. Get the code
 
 ```sh
-swift run SignetTestSuite             # the app: macOS 13 or later
-swift run sig-net --selftest          # the CLI: macOS, Linux or Windows
-swift run sig-net --probe --node <TUID> --ip <device IP> [...]
+git clone https://github.com/gooch12013/Sig-Net-Test-Suite.git
+cd Sig-Net-Test-Suite
+```
+
+### 3. Build and run
+
+On macOS, run the app:
+
+```sh
+swift run SignetTestSuite
+```
+
+The window opens when the build finishes. The first time, macOS asks for local
+network access: click Allow, or the app can't send or receive Sig-Net traffic.
+
+On any platform, run the command-line tool:
+
+```sh
+swift run sig-net --selftest                              # all checks, about 30 s
+swift run sig-net --selftest --offline                    # only the checks that need no network
+swift run sig-net --probe --node <TUID> --ip <device IP>  # probe a real device
 ```
 
 The app is macOS-only (SwiftUI). On Linux and Windows the package builds just
-`SigNet` and `sig-net`. CI (`.github/workflows/build.yml`) builds and self-tests
-on all three on every push and pull request.
+`SigNet` and `sig-net`. `swift build` builds without running.
+
+### 4. Optional: install as a Mac app
+
+```sh
+scripts/make-app.sh --install
+```
+
+This builds `Sig-Net Test Suite.app` and copies it to /Applications, so you can
+open it from Launchpad or Spotlight. See `docs/packaging.md` for details and
+limits.
+
+### Updating
+
+```sh
+git pull
+swift run SignetTestSuite
+```
+
+CI (`.github/workflows/build.yml`) builds and runs the offline self-test on
+macOS, Linux and Windows on every push and pull request.
 
 ## Security settings
 
