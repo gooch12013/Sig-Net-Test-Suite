@@ -96,7 +96,8 @@ public final class FirmwareUpdate {
         transfer(session, flags: testMode ? FTC.TF.testMode : 0) {
             progress(.initiate, 0)
             let g = try declarations(fileID, flags)
-            guard g.fileID != FTC.DEF.multipleFileID else { throw Code.multipleFiles }
+            // Only FileID 0 ("the only file") is ambiguous; some fixtures answer a named file with the multi-file ID too.
+            guard fileID != FTC.DEF.noFileIDOffered || g.fileID != FTC.DEF.multipleFileID else { throw Code.multipleFiles }
             guard g.capabilities & FTC.Cap.acceptUpload != 0 else { throw Code.noUpload }
             guard !testMode || g.capabilities & FTC.Cap.testModeSupported != 0 else { throw Code.noTestMode }
             guard let size = UInt32(exactly: file.count), g.fileSize == 0 || size <= g.fileSize else { throw Code.tooBig }
@@ -163,7 +164,8 @@ public final class FirmwareUpdate {
         let o = transfer(session, flags: FTC.TF.download) {
             progress(.initiate, 0)
             let g = try declarations(fileID, flags)
-            guard g.fileID != FTC.DEF.multipleFileID else { throw Code.multipleFiles }
+            // Only FileID 0 ("the only file") is ambiguous; some fixtures answer a named file with the multi-file ID too.
+            guard fileID != FTC.DEF.noFileIDOffered || g.fileID != FTC.DEF.multipleFileID else { throw Code.multipleFiles }
             guard g.capabilities & FTC.Cap.acceptDownload != 0 else { throw Code.noDownload }
             guard g.capabilities & FTC.Cap.downloadKey == 0 else { throw Code.needKey } // §9.6: no keys here
             guard g.fileSize <= maxSize else { throw Code.tooBig }
