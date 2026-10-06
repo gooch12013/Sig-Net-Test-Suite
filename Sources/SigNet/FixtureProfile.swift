@@ -1,7 +1,7 @@
 import Foundation
 
 /// A fixture's DMX personalities, channels and named value ranges, read from a profile JSON that follows
-/// fixture.schema.json v0.0.1. `load` applies the schema (unknown fields, types, limits) and the three rules a
+/// docs/fixture.schema.json v0.0.1. `load` applies the schema (unknown fields, types, limits) and the three rules a
 /// schema can't express: footprint equals the channel count, `ch` runs 1…n, each channel's ranges cover 0–255 with no gaps.
 public struct FixtureProfile: Codable, Equatable {
     public struct Range: Codable, Hashable {

@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "fixture.schema.json",
+  "title": "Fixture DMX personalities",
+  "description": "A fixture's DMX personalities, channels and value ranges. Schema version 0.0.1.",
+  "version": "0.0.1",
+  "type": "object",
+  "required": ["manufacturer", "model", "personalities"],
+  "additionalProperties": false,
+  "properties": {
+    "manufacturer": { "type": "string", "minLength": 1 },
+    "model": { "type": "string", "minLength": 1 },
+    "personalities": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/personality" }
+    }
+  },
+  "$defs": {
+    "dmxValue": { "type": "integer", "minimum": 0, "maximum": 255 },
+    "personality": {
+      "type": "object",
+      "required": ["personality", "name", "footprint", "channels"],
+      "additionalProperties": false,
+      "properties": {
+        "personality": { "type": "integer", "minimum": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "footprint": { "type": "integer", "minimum": 1, "maximum": 512 },
+        "channels": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 512,
+          "items": { "$ref": "#/$defs/channel" }
+        }
+      }
+    },
+    "channel": {
+      "type": "object",
+      "required": ["ch", "name", "ranges"],
+      "additionalProperties": false,
+      "properties": {
+        "ch": { "type": "integer", "minimum": 1, "maximum": 512 },
+        "name": { "type": "string", "minLength": 1 },
+        "note": { "type": "string", "description": "Free text about the channel, such as when it takes effect." },
+        "ranges": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/range" }
+        }
+      }
+    },
+    "range": {
+      "type": "object",
+      "required": ["from", "to", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "from": { "$ref": "#/$defs/dmxValue" },
+        "to": { "$ref": "#/$defs/dmxValue" },
+        "name": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}
