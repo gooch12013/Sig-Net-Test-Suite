@@ -113,6 +113,7 @@ private struct ManagerRawCommands: View {
                         .disabled(!(info?.get ?? false) || manager.busy)
                     Button("Set") {
                         guard let v = ManagerTID.parse(tid, value) else { return }
+                        if tid == 0x090B, !confirmProtocol(manager, ep: ep, value: v) { return }
                         manager.set(device.tuid, ep: ep, tlvs: [ManagerTLV(tid: tid, value: v)])
                     }
                     .buttonStyle(SoftKeyStyle(lamp: dangerous ? .lampFault : nil))

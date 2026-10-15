@@ -351,14 +351,7 @@ func parameterRow(_ manager: Manager, _ device: ManagerDevice, ep: UInt16, tid: 
     switch ManagerLabels.editor(tid) {
     case .choice(let options):
         setMode = .choices(options.map(\.1)) { i, done in
-            // §11.7.11: switching a Secure Node's port to Art-Net/sACN drops authentication from its level data, so the
-            // Manager shall warn and get the operator's confirmation first.
-            if tid == 0x090B, options[i].0 != 0, manager.securitySettings.mode == .secure,
-               !confirm("Switch Port \(ep) to \(options[i].1)?",
-                        "Level data on this port will no longer be authenticated: anyone on the network can drive it. Sig-Net management stays secure.",
-                        button: "Switch") {
-                return done(.refused("Cancelled"))
-            }
+            if tid == 0x090B, !confirmProtocol(manager, ep: ep, value: [options[i].0]) { return done(.refused("Cancelled")) }
             manager.setSignal(target, ep: ep, tid: tid, value: [options[i].0], done: done)
         }
     case .number(let r):
@@ -437,6 +430,16 @@ private func manufacturerRow(_ manager: Manager, _ device: ManagerDevice, ep: UI
                       get: { done in manager.getSignal(target, ep: ep, tid: tid, done: done) },
                       set: setMode,
                       enabled: manager.running && !manager.busy)
+}
+
+/// §11.7.11: switching a Secure Node's port to Art-Net/sACN drops authentication from its level data, so the Manager
+/// shall warn and get the operator's confirmation first. Every EP_PROTOCOL SET in the app goes through here; true = go ahead.
+func confirmProtocol(_ manager: Manager, ep: UInt16, value: [UInt8]) -> Bool {
+    guard (value.first ?? 0) != 0, manager.securitySettings.mode == .secure else { return true }
+    let all = ep == 0xFFFF
+    return confirm("Switch \(all ? "every port" : "Port \(ep)") to \(ManagerLabels.value(0x090B, value))?",
+                   "Level data on \(all ? "these ports" : "this port") will no longer be authenticated: anyone on the network can drive it. Sig-Net management stays secure.",
+                   button: "Switch")
 }
 
 /// A modal warning with Cancel as the default; true = the operator chose `button`.
