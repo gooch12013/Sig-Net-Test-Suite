@@ -4,13 +4,13 @@ import Foundation
 /// Protocol names (TID hex, RT_/EP_ prefixes) stay in the Tools tab.
 public enum ManagerLabels {
     static let titles: [UInt16: String] = [
-        0x0305: "RDM background tasks", 0x0306: "RDM queue",
+        0x0305: "RDM background tasks", 0x0306: "RDM queue", 0x0401: "Offboard",
         0x0501: "MAC address", 0x0502: "IPv4 mode", 0x0503: "IPv4 address", 0x0504: "Netmask", 0x0505: "Gateway",
         0x0506: "IPv4 in use", 0x0581: "IPv6 mode", 0x0582: "IPv6 address", 0x0583: "IPv6 prefix",
         0x0584: "IPv6 gateway", 0x0585: "IPv6 in use",
         0x0601: "Supported parameters", 0x0602: "Endpoints", 0x0603: "Protocol version", 0x0604: "Firmware",
         0x0605: "Label", 0x0606: "Multicast override", 0x0607: "Identify", 0x0608: "Device status",
-        0x0609: "Roles", 0x060B: "Model", 0x060D: "Onboarding (SNOW)",
+        0x0609: "Roles", 0x060A: "Reboot", 0x060B: "Model", 0x060D: "Onboarding (SNOW)",
         0x0901: "Universe", 0x0902: "Label", 0x0903: "Multicast override", 0x0904: "Capabilities",
         0x0905: "Direction", 0x0906: "Input priority", 0x0907: "Status", 0x0908: "Failover", 0x0909: "DMX timing",
         0x090A: "Max refresh rate", 0x090B: "Protocol", 0x090C: "Identify",
