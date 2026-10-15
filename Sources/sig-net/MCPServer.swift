@@ -202,7 +202,7 @@ enum MCPServer {
              params: ["device": deviceParam, "endpoint": endpointParam,
                       "tids": ["type": "array", "items": tidParam, "description": "The TIDs to read"]],
              required: ["device", "tids"]) { a in
-            let target = try bytes(a, "device", count: 6), ep = endpoint(a)
+            let target = try bytes(a, "device", count: 6), ep = try endpoint(a)
             guard let list = a["tids"] as? [Any], !list.isEmpty else { throw SigNetError("tids: one or more TIDs") }
             let tids = try list.map(tid)
             try startManager()
@@ -219,7 +219,7 @@ enum MCPServer {
              params: ["device": deviceParam, "endpoint": endpointParam, "tid": tidParam,
                       "value": p("string", "The new value, as described above")],
              required: ["device", "tid", "value"], writes: true) { a in
-            let target = try bytes(a, "device", count: 6), ep = endpoint(a), t = try tid(a["tid"])
+            let target = try bytes(a, "device", count: 6), ep = try endpoint(a), t = try tid(a["tid"])
             // Catalogue TIDs that aren't SETs (POLL, RDM_COMMAND…) stay out: RDM goes through rdm_set and its checks.
             if let info = ManagerTID.byTID[t], !info.set { throw SigNetError("\(info.name) can't be SET") }
             // An empty value would go out as a GET (an empty TLV), not a SET.
@@ -243,7 +243,7 @@ enum MCPServer {
              description: "Asks one port of a device for its RDM table of devices (TOD_CONTROL 0x00) and lists the fixture UIDs it reports.",
              params: ["device": deviceParam, "endpoint": p("integer", "The port, 1…n")],
              required: ["device", "endpoint"]) { a in
-            let target = try bytes(a, "device", count: 6), ep = endpoint(a)
+            let target = try bytes(a, "device", count: 6), ep = try endpoint(a)
             try startManager()
             let r: ManagerResult = try answer { manager.requestToD(target, ep: ep, done: $0) }
             var out = outcome(r)
@@ -447,7 +447,7 @@ enum MCPServer {
                       "pid": p("string", "RDM parameter ID in hex, e.g. 0x0060 (a JSON number is read as decimal)"),
                       "data": p("string", "Parameter data as hex (optional)")],
              required: ["device", "endpoint", "uid", "pid"], writes: set) { a in
-            let target = try bytes(a, "device", count: 6), ep = endpoint(a), uid = try bytes(a, "uid", count: 6)
+            let target = try bytes(a, "device", count: 6), ep = try endpoint(a), uid = try bytes(a, "uid", count: 6)
             let pid = try hex16(a["pid"], "pid")
             // RDM's own reboot, wipe and re-address: RESET_DEVICE, FACTORY_DEFAULTS and the E1.37-2 network PIDs.
             if set, !allowDangerous, pid == 0x1001 || pid == 0x0090 || (0x0700...0x070D).contains(pid) {
@@ -510,7 +510,13 @@ enum MCPServer {
         return d
     }
 
-    private static func endpoint(_ a: [String: Any]) -> UInt16 { UInt16(clamping: Int(number(a["endpoint"]) ?? 0)) }
+    /// 0 when absent. Anything else that isn't a whole 0-65535 is an error: clamping would retarget a SET to the root
+    /// or to every port.
+    private static func endpoint(_ a: [String: Any]) throws -> UInt16 {
+        guard let v = a["endpoint"] else { return 0 }
+        guard let n = number(v), let e = UInt16(exactly: n) else { throw SigNetError("endpoint: a whole number, 0 (root) to 65535") }
+        return e
+    }
 
     private static func bytes(_ a: [String: Any], _ key: String, count: Int) throws -> [UInt8] {
         let digits = (a[key] as? String ?? "").filter(\.isHexDigit)
