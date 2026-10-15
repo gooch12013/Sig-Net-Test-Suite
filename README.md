@@ -17,7 +17,8 @@ Every role is written in Swift from the spec (*Sig-Net Protocol Framework
 V1.10*), using swift-crypto for HMAC-SHA256 and HKDF. Packets are checked byte
 for byte against the spec's test vectors. The protocol code lives in the
 portable `SigNet` module, which also builds a command-line tool, `sig-net`, for
-Linux and Windows.
+Linux and Windows. The same tool can run as an MCP server, so AI clients can use
+the suite too.
 
 SNOW (over-the-wire onboarding) is not implemented. See `docs/snow-summary.md`.
 
@@ -169,6 +170,50 @@ DEVICE_INFO, labels, SLOT_INFO, SLOT_DESCRIPTION 0-10, IDENTIFY on and off).
 Every SET is put back afterwards. It never sends offboard, reboot or network
 SETs. Omit `--passphrase` for Open Mode. It takes about 2.5 minutes.
 
+## AI clients (MCP)
+
+```sh
+swift run sig-net --mcp [--passphrase <p>] [--scope <s>] [--interface <local IP>] [--allow-set] [--allow-dangerous]
+```
+
+`--mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io) server
+on stdin and stdout, so an AI client such as Claude Code can use the suite. The
+repo's `.mcp.json` registers it for Claude Code. Run
+`swift build --product sig-net` once first: the first build takes longer than a
+client waits for a server to start.
+
+| Tool | What it does |
+| --- | --- |
+| `status` | Security settings, write flags, and what each part is doing |
+| `list_tids` | The TID catalogue |
+| `discover` | Polls for Nodes and lists them |
+| `get_parameters`, `set_parameter` | TID GET and SET on any endpoint |
+| `rdm_devices`, `rdm_get`, `rdm_set` | A port's Table of Devices, and RDM through it |
+| `transmit`, `receive` | Send levels or a test pattern; listen to universes and report levels, sources, timecode and drop counters |
+| `virtual_device` | Runs the Device tab's Node inside the server, so everything can be tried without hardware |
+| `logs` | The Manager's packet log (raw bytes on request), the Receiver's log and rejected-packet headers, the virtual Node's log |
+| `selftest`, `probe` | The self-test and the probe above |
+
+The server starts read-only. `--allow-set` enables the tools that change a
+device or put levels on the network: `set_parameter`, `rdm_set`, `transmit`,
+`probe`, and `selftest` with its network loops. Even then it refuses offboard,
+reboot and network-address SETs, their RDM equivalents (RESET_DEVICE,
+FACTORY_DEFAULTS and the E1.37-2 network PIDs), and in Secure Mode switching a
+port to Art-Net or sACN, until you add `--allow-dangerous`. PF §11.7.11 requires
+the operator's confirmation for that last one, and the launch flag is it. The
+probe does that switch once, so in Secure Mode it needs the flag too.
+
+The passphrase comes from `--passphrase` or the `SIGNET_PASSPHRASE` environment
+variable, never from the AI client. Without one the server runs in Open Mode.
+`.mcp.json` passes `SIGNET_PASSPHRASE` through from your shell. Each run gets
+fresh TUIDs, so the server can run next to the app or another copy of itself. To
+allow writes, or to set the scope or interface, register your own copy at local
+scope, which takes precedence over the repo's:
+
+```sh
+claude mcp add --scope local sig-net -- swift run --quiet sig-net --mcp --allow-set
+```
+
 ## Notes on the reference C library
 
 Earlier versions of this app used the Sig-Net desktop C library. Where it
@@ -205,7 +250,8 @@ More on the library's Manager-facing behaviour is in `docs/manager-semantics.md`
 | `Manager*.swift`, `SigNetKeys.swift`, `Security.swift`, `UDPSocket.swift`, `Timecode.swift` | Codec, keys and HMAC, TID catalogue and labels, `--probe`, security settings and TUIDs, multicast socket, timecode |
 | `FTC.swift`, `FirmwareUpdate.swift`, `FirmwareSelfTest.swift` | RDM file transfer (ANSI E1.37-4): constants and CRC, the controller, a strict Responder emulator and its self-test |
 | `SelfTest.swift` | The `--selftest` list shared by both front-ends, including the Sender-to-Receiver loopback checks |
-| `Sources/sig-net/main.swift` | The CLI |
+| `Sources/sig-net/main.swift`, `MCPServer.swift` | The CLI, and its `--mcp` server for AI clients |
+| `.mcp.json`, `scripts/mcp-smoke.sh` | Registers the MCP server for Claude Code in this repo; CI's check of it |
 | `Sources/SignetTestSuite/` | The macOS app: one SwiftUI view per tab (`TransmitView`, `ReceiveView`, `DeviceView`, `Manager*View`), `AppView` and `main.swift` for the window and security panel, `Signet.swift` and `Transmitter.swift` for the observable engine wrappers |
 | `Snapshot.swift` | Developer aid: `--snapshot out.png` renders the window off-screen (no Screen Recording permission needed) |
 | `docs/manager-wire.md` | Packet format, keys and HMAC, with test vectors |

@@ -8,6 +8,8 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - run: swift build
       - run: swift run sig-net --selftest --offline # hosted runners don't loop multicast back; run the full list locally
+      - run: bash scripts/mcp-smoke.sh
+        shell: bash
 
   linux:
     runs-on: ubuntu-latest
@@ -16,6 +18,8 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - run: swift build --product sig-net
       - run: swift run sig-net --selftest --offline # hosted runners don't reliably loop multicast back
+      - run: bash scripts/mcp-smoke.sh
+        shell: bash
 
   windows:
     runs-on: windows-latest
@@ -27,3 +31,5 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - run: swift build --product sig-net
       - run: swift run sig-net --selftest --offline
+      - run: bash scripts/mcp-smoke.sh
+        shell: bash

@@ -72,10 +72,10 @@ open class TransmitterEngine {
     private var tcLast = -1
     private var tcFrozen: (stream: UInt16, value: [UInt8])?, tcSentAt: UInt64 = 0
 
-    /// `role` picks the persisted TUID; distinct roles are distinct merge sources.
-    public init(settings: SecurityConfig, role: String = "sender-v2") {
+    /// `role` picks the persisted TUID, unless `tuid` is given; distinct roles are distinct merge sources.
+    public init(settings: SecurityConfig, role: String = "sender-v2", tuid: [UInt8]? = nil) {
         self.settings = settings
-        tuid = Identity.tuid(role)
+        self.tuid = tuid ?? Identity.tuid(role)
     }
 
     public func start() {

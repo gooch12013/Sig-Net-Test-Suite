@@ -121,12 +121,17 @@ public enum Identity {
         let key = "tuid.\(role)"
         let defaults = UserDefaults.standard
         if let saved = defaults.data(forKey: key), saved.count == 6 { return [UInt8](saved) }
+        let tuid = fresh()
+        defaults.set(Data(tuid), forKey: key)
+        return tuid
+    }
+
+    /// A new TUID in the dynamic range, not saved: for a process that may run more than once at the same time.
+    public static func fresh() -> [UInt8] {
         var id = (0..<4).map { _ in UInt8.random(in: 0...0xFF) } // SystemRandomNumberGenerator: the OS CSPRNG
         id[0] |= 0x80
         if id[0] == 0xFF && id[1] == 0xFF && id[2] == 0xFF { id[1] = 0 } // avoid reserved 0xFFFFFFF0+
-        let tuid: [UInt8] = [0x7F, 0xF0] + id
-        defaults.set(Data(tuid), forKey: key)
-        return tuid
+        return [0x7F, 0xF0] + id
     }
 
     public static func tuple(_ t: [UInt8]) -> (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8) {

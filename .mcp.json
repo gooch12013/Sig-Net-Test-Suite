@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "sig-net": {
+      "command": "swift",
+      "args": ["run", "--quiet", "sig-net", "--mcp"],
+      "env": { "SIGNET_PASSPHRASE": "${SIGNET_PASSPHRASE:-}" }
+    }
+  }
+}

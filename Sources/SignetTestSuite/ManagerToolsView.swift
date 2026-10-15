@@ -84,7 +84,7 @@ private struct ManagerRawCommands: View {
     }
     private var families: [String] { ManagerTID.all.map(\.family).reduce(into: []) { if !$0.contains($1) { $0.append($1) } } }
     private var info: ManagerTID? { ManagerTID.byTID[tid] }
-    private var dangerous: Bool { tid == 0x0401 || tid == 0x060A || (0x0502...0x0505).contains(tid) || (0x0581...0x0584).contains(tid) }
+    private var dangerous: Bool { ManagerTID.dangerous(tid) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {

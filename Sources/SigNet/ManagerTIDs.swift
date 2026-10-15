@@ -68,10 +68,16 @@ public struct ManagerTID: Identifiable, Hashable {
     ]
     public static let byTID = Dictionary(uniqueKeysWithValues: all.map { ($0.tid, $0) })
 
-    static func name(_ tid: UInt16) -> String { byTID[tid]?.name ?? String(format: "TID 0x%04X", tid) }
+    /// SETs that can wipe, reboot or re-address a device: the Tools tab's red lamp, and what the MCP server's
+    /// --allow-dangerous unlocks.
+    public static func dangerous(_ tid: UInt16) -> Bool {
+        tid == 0x0401 || tid == 0x060A || (0x0502...0x0505).contains(tid) || (0x0581...0x0584).contains(tid)
+    }
+
+    public static func name(_ tid: UInt16) -> String { byTID[tid]?.name ?? String(format: "TID 0x%04X", tid) }
 
     /// Human-readable value. Unknown or odd-length values fall back to hex.
-    static func describe(_ tid: UInt16, _ v: [UInt8]) -> String {
+    public static func describe(_ tid: UInt16, _ v: [UInt8]) -> String {
         func bits(_ x: UInt32) -> String {
             let on = (0..<32).filter { x >> $0 & 1 == 1 }.map(String.init)
             return String(format: "0x%0*X", v.count * 2, x) + " bits[" + on.joined(separator: ",") + "]"
