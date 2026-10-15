@@ -84,6 +84,7 @@ extension ManagerEngine {
             bad.mode = .secure
             bad.passphrase = "Wrong-Pass-42"
             bad.interface = s.interface
+            bad.scope = s.scope
             let intruder = ManagerEngine(settings: bad, tuid: [0x7F, 0xF0, 0xC0, 0xDE, 0x00, 0x01])
             intruder.heartbeat = false
             intruder.start()

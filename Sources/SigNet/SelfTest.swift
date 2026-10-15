@@ -23,6 +23,7 @@ public enum SelfTest {
             s.mode = mode
             s.passphrase = "Sig-Net-Test-9"
             s.interface = interface
+            s.scope = scope
             let tag = mode.rawValue.lowercased()
             report("manager loop \(tag)", ManagerEngine.loopTest(settings: s))
             report("sender loop \(tag)", TransmitterEngine.loopTest(settings: s))
@@ -37,6 +38,9 @@ public enum SelfTest {
 
     /// Each check uses its own universes (101+) and stops everything before returning. Self-test roles never
     /// share a TUID with a running GUI.
+    /// The network loops' routing scope: Nodes on the usual "local" scope drop everything they send.
+    static let scope = "selftest"
+
     static func loopback(_ s: SecurityConfig) -> [(String, String?)] {
         var rows = [("multi-universe 101-103", multiUniverse(s)), ("priority 150 beats 100", priority(s)),
                     ("sync", sync(s)), ("timecode stream 7 @25", timecode(s)), ("preview 120", preview(s))]
@@ -134,7 +138,7 @@ public enum SelfTest {
     private static func mismatch(_ interface: String) -> [(String, String?)] {
         func settings(_ mode: SecurityMode, _ pass: String) -> SecurityConfig {
             let s = SecurityConfig()
-            (s.mode, s.passphrase, s.interface) = (mode, pass, interface)
+            (s.mode, s.passphrase, s.interface, s.scope) = (mode, pass, interface, scope)
             return s
         }
         let rxS = settings(.secure, "Sig-Net-Test-9")
