@@ -249,6 +249,7 @@ More on the library's Manager-facing behaviour is in `docs/manager-semantics.md`
 | `TransmitterEngine.swift`, `ReceiverEngine.swift`, `DeviceEngine.swift`, `DeviceRDM.swift`, `ManagerEngine.swift` | The Sender, the data-plane Node, the complete Node with its RDM responder, and the Manager |
 | `Manager*.swift`, `SigNetKeys.swift`, `Security.swift`, `UDPSocket.swift`, `Timecode.swift` | Codec, keys and HMAC, TID catalogue and labels, `--probe`, security settings and TUIDs, multicast socket, timecode |
 | `FTC.swift`, `FirmwareUpdate.swift`, `FirmwareSelfTest.swift` | RDM file transfer (ANSI E1.37-4): constants and CRC, the controller, a strict Responder emulator and its self-test |
+| `Version.swift` | The suite's version number, the one place to bump it |
 | `SelfTest.swift` | The `--selftest` list shared by both front-ends, including the Sender-to-Receiver loopback checks |
 | `Sources/sig-net/main.swift`, `MCPServer.swift` | The CLI, and its `--mcp` server for AI clients |
 | `.mcp.json`, `scripts/mcp-smoke.sh` | Registers the MCP server for Claude Code in this repo; CI's check of it |

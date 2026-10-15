@@ -8,6 +8,9 @@ cd "$(dirname "$0")/.."
 NAME="Sig-Net Test Suite"
 APP="build/$NAME.app"
 
+VERSION=$(sed -n 's/^public let suiteVersion = "\(.*\)"$/\1/p' Sources/SigNet/Version.swift)
+[ -n "$VERSION" ] || { echo "make-app.sh: no suiteVersion in Sources/SigNet/Version.swift" >&2; exit 1; }
+
 swift build -c release
 BIN="$(swift build -c release --show-bin-path)"
 
@@ -36,7 +39,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundleIdentifier</key><string>com.signet.testsuite</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>$(git describe --tags --always 2>/dev/null || echo 0.1)</string>
+  <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>$(git rev-list --count HEAD 2>/dev/null || echo 1)</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>

@@ -70,7 +70,7 @@ enum MCPServer {
                 reply["result"] = [
                     "protocolVersion": ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"].contains(asked) ? asked : "2025-11-25",
                     "capabilities": ["tools": [String: Any]()],
-                    "serverInfo": ["name": "sig-net", "version": "1.0.0"],
+                    "serverInfo": ["name": "sig-net", "version": suiteVersion],
                     "instructions": instructions,
                 ] as [String: Any]
             case "ping":
