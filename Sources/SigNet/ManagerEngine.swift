@@ -462,6 +462,8 @@ open class ManagerEngine {
         let asked = Set(p.tlvs.map(\.tid))
         switch p.kind {
         case .get, .probe:
+            // A heartbeat POLL_REPLY carries RT_ENDPOINT_COUNT too; it isn't the answer to our GET.
+            guard !tlvs.contains(where: { $0.tid == 0x0002 }) else { return }
             let got = tlvs.filter { asked.contains($0.tid) }
             guard !got.isEmpty else { return }
             let values = got.map { "\(ManagerTID.name($0.tid)) = \(ManagerTID.describe($0.tid, $0.value))" }.joined(separator: "; ")
