@@ -435,7 +435,7 @@ private func manufacturerRow(_ manager: Manager, _ device: ManagerDevice, ep: UI
 /// §11.7.11: switching a Secure Node's port to Art-Net/sACN drops authentication from its level data, so the Manager
 /// shall warn and get the operator's confirmation first. Every EP_PROTOCOL SET in the app goes through here; true = go ahead.
 func confirmProtocol(_ manager: Manager, ep: UInt16, value: [UInt8]) -> Bool {
-    guard (value.first ?? 0) != 0, manager.securitySettings.mode == .secure else { return true }
+    guard value.contains(where: { $0 != 0 }), manager.securitySettings.mode == .secure else { return true }
     let all = ep == 0xFFFF
     return confirm("Switch \(all ? "every port" : "Port \(ep)") to \(ManagerLabels.value(0x090B, value))?",
                    "Level data on \(all ? "these ports" : "this port") will no longer be authenticated: anyone on the network can drive it. Sig-Net management stays secure.",
