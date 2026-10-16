@@ -101,6 +101,33 @@ public enum RDMCatalog {
         0x1001, 0x1030, 0x1042, // reset, capture preset, preset status (needs a scene number): Debug only
     ]
 
+    /// Why a GET reply's parameter data doesn't fit what E1.20-2025 defines for its PID, so the panel treats it as no
+    /// answer (never truncated, never half-applied); nil when it fits or the PID isn't checked here.
+    public static func malformed(_ pid: UInt16, _ pd: [UInt8]) -> String? {
+        func personality(_ current: UInt8, _ count: UInt8) -> Bool { current == 0 ? count == 0 : current <= count } // §10.6.1: from 1
+        func address(_ a: UInt16) -> Bool { (1...512).contains(a) || a == 0xFFFF } // §10.6.3: 0xFFFF = no footprint
+        switch pid {
+        case 0x0060: // §10.5.1
+            guard pd.count == 19 else { return "DEVICE_INFO is \(pd.count) bytes, not 19" }
+            let footprint = mgrU16(pd[10...]), start = mgrU16(pd[14...])
+            if !(1...2).contains(pd[0]) { return "RDM protocol version \(pd[0]).\(pd[1])" }
+            if footprint > 512 { return "footprint \(footprint)" }
+            if !personality(pd[12], pd[13]) { return "personality \(pd[12]) of \(pd[13])" }
+            if footprint == 0 ? start != 0xFFFF : !address(start) { return "start address \(start) with a footprint of \(footprint)" }
+            if mgrU16(pd[16...]) > 0xFFF0 { return "\(mgrU16(pd[16...])) sub-devices" }
+        case 0x00F0:
+            guard pd.count == 2, address(mgrU16(pd)) else { return "DMX start address \(pd.count == 2 ? "\(mgrU16(pd))" : "of \(pd.count) bytes")" }
+        case 0x00E0:
+            guard pd.count == 2, personality(pd[0], pd[1]) else { return pd.count == 2 ? "personality \(pd[0]) of \(pd[1])" : "personality of \(pd.count) bytes" }
+        case 0x00E1: // §10.6.2: personality 1-255, footprint 0-512, 0-32 bytes of text
+            guard (3...35).contains(pd.count), pd[0] != 0, mgrU16(pd[1...]) <= 512 else { return "personality description of \(pd.count) bytes" }
+        case 0x0080, 0x0081, 0x0082, 0x00C0, 0x00C2:
+            if pd.count > 32 { return "a label of \(pd.count) bytes, over 32" }
+        default: break
+        }
+        return nil
+    }
+
     /// Offset of the text in each description PID's answer.
     public static let descriptionTextOffset: [UInt16: Int] = [0x00E1: 3, 0x0344: 1, 0x0346: 1, 0x0348: 5, 0x0642: 1, 0x1021: 1]
 

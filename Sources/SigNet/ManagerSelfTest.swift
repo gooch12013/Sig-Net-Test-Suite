@@ -249,6 +249,31 @@ extension ManagerEngine {
         ]
         if let bad = rdmCases.first(where: { $0.1 != $0.2 }) { return "RDM reply check: \(bad.0) \(bad.2 ? "rejected" : "accepted")" }
 
+        // E1.20-2025 lengths and ranges for what the RDM panel files (RDMCatalog.malformed).
+        func info(protocol major: UInt8 = 1, footprint: UInt16 = 12, personality: (UInt8, UInt8) = (1, 3), start: UInt16 = 1, subs: UInt16 = 0) -> [UInt8] {
+            let head: [UInt8] = [major, 0, 0, 1, 0, 0, 0, 0, 0, 0x11] // protocol, model, category, software version
+            let tail: [UInt8] = [personality.0, personality.1] + mgrBE16(start) + mgrBE16(subs) + [0]
+            return head + mgrBE16(footprint) + tail
+        }
+        let replyCases: [(String, UInt16, [UInt8], Bool)] = [
+            ("DEVICE_INFO", 0x0060, info(), true), ("DEVICE_INFO 2.0", 0x0060, info(protocol: 2), true),
+            ("DEVICE_INFO no footprint", 0x0060, info(footprint: 0, personality: (0, 0), start: 0xFFFF), true),
+            ("DEVICE_INFO 18 bytes", 0x0060, Array(info().dropLast()), false), ("DEVICE_INFO protocol 3", 0x0060, info(protocol: 3), false),
+            ("DEVICE_INFO footprint 513", 0x0060, info(footprint: 513), false), ("DEVICE_INFO personality 4 of 3", 0x0060, info(personality: (4, 3)), false),
+            ("DEVICE_INFO no footprint, address 1", 0x0060, info(footprint: 0, start: 1), false), ("DEVICE_INFO address 0", 0x0060, info(start: 0), false),
+            ("DEVICE_INFO 0xFFF1 sub-devices", 0x0060, info(subs: 0xFFF1), false),
+            ("start address 512", 0x00F0, [2, 0], true), ("start address 0xFFFF", 0x00F0, [0xFF, 0xFF], true),
+            ("start address 513", 0x00F0, [2, 1], false), ("start address 1 byte", 0x00F0, [1], false),
+            ("personality 3 of 3", 0x00E0, [3, 3], true), ("personality 0 of 3", 0x00E0, [0, 3], false), ("personality 3 bytes", 0x00E0, [1, 3, 0], false),
+            ("personality description", 0x00E1, [1, 0, 12] + Array("Basic".utf8), true), ("personality description 0", 0x00E1, [0, 0, 12], false),
+            ("personality description 33 bytes of text", 0x00E1, [1, 0, 12] + [UInt8](repeating: 65, count: 33), false),
+            ("label of 32", 0x0082, [UInt8](repeating: 65, count: 32), true), ("label of 33", 0x0082, [UInt8](repeating: 65, count: 33), false),
+            ("software label of 33", 0x00C0, [UInt8](repeating: 65, count: 33), false), ("unchecked PID", 0x0400, [1, 2, 3], true),
+        ]
+        if let bad = replyCases.first(where: { (RDMCatalog.malformed($0.1, $0.2) == nil) != $0.3 }) {
+            return "RDM table check: \(bad.0) \(bad.3 ? "rejected: \(RDMCatalog.malformed(bad.1, bad.2)!)" : "accepted")"
+        }
+
         // §7.5 key file: written uppercase, read in any case (§7.4), 64 hex digits exactly.
         let k = (0..<32).map { UInt8($0 * 7 + 1) }
         let file = String(decoding: KeyFile.encode(k0: k, scope: "tour"), as: UTF8.self)

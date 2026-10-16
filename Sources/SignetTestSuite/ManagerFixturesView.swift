@@ -510,7 +510,12 @@ private struct ManagerFixturePanel: View {
         guard let dest = mgrBytes(hex: uid), manager.running else { filed(nil); return done(.silent("The Manager isn't running")) }
         manager.rdm(device.tuid, ep: port, dest: dest, set: isSet, pid: pid, pd: pd) { r in
             if r.ok, ManagerRDM.valid(r.frame), r.frame[16] == 0 {
-                filed(Array(r.frame.dropFirst(24).prefix(Int(r.frame[23]))))
+                let data = Array(r.frame.dropFirst(24).prefix(Int(r.frame[23])))
+                if !isSet, let why = RDMCatalog.malformed(pid, data) { // filed as no answer, like a NACK: never half-applied
+                    filed(nil)
+                    return done(.refused("The fixture's answer doesn't fit E1.20: \(why)"))
+                }
+                filed(data)
                 done(.latched)
             } else {
                 filed(nil)

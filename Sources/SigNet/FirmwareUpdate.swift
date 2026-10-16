@@ -20,6 +20,7 @@ public final class FirmwareUpdate {
     enum Code: Error {
         case ok, cancelled, noReply, nack, ackTimer, badReply, status, multipleFiles, noUpload, noTestMode, tooBig
         case badDeclaration, tooManyResends, noTransferComplete, tooManyPolls, noDownload, needKey, fileCRCMismatch
+        case tooSlow, commitUnconfirmed
     }
 
     public struct Result {
@@ -35,6 +36,8 @@ public final class FirmwareUpdate {
         var bootloaderSwitches = 0
         var commitTime: UInt32 = 0
         var expectedUID: [UInt8] = []
+        /// Declared delays waited so far, in ms (`maxWaiting`).
+        var waited: UInt64 = 0
     }
 
     public struct Outcome {
@@ -63,6 +66,9 @@ public final class FirmwareUpdate {
 
     /// Bounds on IN_PROGRESS polls per step, PacketCRC resends per packet (§13.2.2, §13.6.1), bootloader switches.
     static let maxPolls = 1000, maxResends = 3, maxSwitches = 3
+    /// All the delays a fixture declares in one transfer, at most: 15 min (the Commit Time isn't counted). Each may be up
+    /// to `FTC.maxDelay` (§8.6.2, §12.1.4), but the Manager holds back every other RDM for as long as a transfer runs.
+    static let maxWaiting: UInt64 = 900_000
 
     private let transport: Transport
     private let sleep: (UInt32) -> Void
@@ -150,18 +156,29 @@ public final class FirmwareUpdate {
             try wait(UInt32(d.validationDelay))
             let commitPD = [session] + mgrBE16(flags)
             // GET:FTC_COMMIT first, so a failed validation can still be cancelled before anything is saved (§9.4).
-            var c = try poll(FTC.getCommand, FTC.PID.commit, commitPD, min: 15)
-            guard c[0] == FTC.RS.statusOK else { throw fail(.status, "GET:FTC_COMMIT") }
-            try agrees(c, "GET:FTC_COMMIT") // in doubt: cancel before anything is saved
-            progress(.committing, UInt32(file.count))
-            c = try poll(FTC.setCommand, FTC.PID.commit, commitPD, min: 15)
-            guard c[0] == FTC.RS.statusOK else { sessionOpen = true; throw fail(.status, "SET:FTC_COMMIT") }
+            let gc = try poll(FTC.getCommand, FTC.PID.commit, commitPD, min: 15)
+            guard gc[0] == FTC.RS.statusOK else { throw fail(.status, "GET:FTC_COMMIT") }
+            try agrees(gc, "GET:FTC_COMMIT") // in doubt: cancel before anything is saved
+            // The GET's Commit Time and ExpectedUID, in case the SET's reply is lost (§13.3.2).
             result.commitTime = result.data
-            try agrees(c, "SET:FTC_COMMIT") // too late to cancel (§9.5), but not a success
-            result.expectedUID = Array(c[9..<15]) // recorded for the caller; the transport can't rediscover (§13.3.4)
+            result.expectedUID = Array(gc[9..<15]) // recorded for the caller; the transport can't rediscover (§13.3.4)
+            progress(.committing, UInt32(file.count))
+            // A SET whose reply is lost, unreadable or contradicts itself may be committing all the same, too late to
+            // cancel (§9.5): wait out the GET's Commit Time anyway, then say the commit is unconfirmed.
+            var unconfirmed = false
+            do {
+                let c = try poll(FTC.setCommand, FTC.PID.commit, commitPD, min: 15)
+                guard c[0] == FTC.RS.statusOK else { sessionOpen = true; throw fail(.status, "SET:FTC_COMMIT") }
+                try agrees(c, "SET:FTC_COMMIT")
+                result.commitTime = result.data
+                result.expectedUID = Array(c[9..<15])
+            } catch let e as Code where [.noReply, .badReply, .ackTimer, .fileCRCMismatch].contains(e) {
+                unconfirmed = true
+            }
             progress(.rebooting, UInt32(file.count))
             // §9.4: no traffic during Commit Time, not sliced. §13.3: test mode reports it but doesn't execute it.
             if !testMode { sleep(min(result.commitTime, FTC.maxDelay)) }
+            if unconfirmed { throw Code.commitUnconfirmed }
         }
     }
 
@@ -367,8 +384,13 @@ public final class FirmwareUpdate {
         _ = transport(FTC.setCommand, FTC.PID.cancel, [session])
     }
 
-    /// Waits in 50 ms slices so a cancel doesn't sit out a long declared delay.
+    /// Waits a delay the fixture declared, in 50 ms slices so a cancel doesn't sit out a long one; past `maxWaiting` in
+    /// all the transfer is cancelled instead (§5.6).
     private func wait(_ ms: UInt32) throws {
+        guard UInt64(ms) <= Self.maxWaiting - result.waited else {
+            throw fail(.tooSlow, "delay \(ms) ms would take the fixture's waits past \(Self.maxWaiting / 60_000) min")
+        }
+        result.waited += UInt64(ms)
         var left = ms
         while left > 0 {
             if stopping { throw Code.cancelled }
@@ -435,6 +457,10 @@ public final class FirmwareUpdate {
         case .noDownload: return "The fixture doesn't offer this file for download."
         case .needKey: return "This file needs a download key, which this app can't send yet."
         case .fileCRCMismatch: return "The fixture's checksum of the file didn't match ours."
+        case .tooSlow: return "The fixture asked for more than 15 minutes of waiting in all, so the transfer was cancelled."
+        case .commitUnconfirmed:
+            let uid = o.result.expectedUID.count == 6 ? " It should answer as \(ManagerRDM.uid(o.result.expectedUID))." : ""
+            return "The fixture didn't clearly confirm saving the file, so it may or may not have installed it. Once it has restarted, check its software version on the RDM tab.\(uid)"
         }
     }
 

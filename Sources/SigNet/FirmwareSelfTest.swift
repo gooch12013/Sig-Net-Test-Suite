@@ -28,6 +28,8 @@ final class FTCResponder {
     var shortPacket = -1                            // upload packet n: only half of it stored (DataOffset says so, §13.2.2)
     var lieOffset: (packet: Int, delta: Int64)?     // upload packet n: stored, but DataOffset reported off by delta
     var lieCommitCRC = false, lieCommitFlags = false // FTC_COMMIT OK with a CalculatedFileCRC or CommitFlags that disagree
+    var lieOnSetOnly = false                        // ...on SET:FTC_COMMIT only, after an honest GET
+    var dropCommitReply = false                     // SET:FTC_COMMIT carried out, its reply lost
     var downloadBytes: (packet: Int, count: Int)?   // download packet n carries this many file bytes
     var onRequest: ((UInt8, UInt16, [UInt8]) -> Void)?
 
@@ -205,13 +207,13 @@ final class FTCResponder {
 
     // MARK: FTC_COMMIT (§13.3)
 
-    private func commit(_ cc: UInt8, _ pd: [UInt8], get: Bool) -> FirmwareUpdate.Reply {
+    private func commit(_ cc: UInt8, _ pd: [UInt8], get: Bool) -> FirmwareUpdate.Reply? {
         guard pd.count == 3 else { return nack(cc, FTC.PID.commit, 0x0001, "FTC_COMMIT PDL \(pd.count), not 3") }
         let s = pd[0], cf = mgrU16(pd[1...]), test = flags & FTC.TF.testMode != 0, what = get ? "GET:FTC_COMMIT" : "SET:FTC_COMMIT"
         let calc = file.caps & FTC.Cap.processFileCRC != 0 ? FTC.crc(received) : 0
         let expected = test ? uid : newUID ?? uid
         func r(_ st: UInt8, _ data: UInt32 = 0) -> FirmwareUpdate.Reply {
-            let ok = st == FTC.RS.statusOK
+            let ok = st == FTC.RS.statusOK && (!get || !lieOnSetOnly)
             return ack(cc, FTC.PID.commit, [st] + mgrBE32(data) + mgrBE16(ok && lieCommitFlags ? cf ^ 1 : cf)
                        + mgrBE16(ok && lieCommitCRC ? calc ^ 0x1234 : calc) + expected)
         }
@@ -235,7 +237,7 @@ final class FTCResponder {
             saved = true; inBootloader = false; uid = expected
             offline = (now + UInt64(commitTime), "Commit Time")
         }
-        return reply
+        return dropCommitReply ? nil : reply
     }
 
     // MARK: FTC_CANCEL (§13.4)
@@ -443,6 +445,29 @@ extension FirmwareUpdate {
             let o = fu.run(file: image, testMode: false)
             check(name, o.code == code && r.sent(set, FTC.PID.commit).isEmpty && r.sent(set, FTC.PID.cancel).count == 1
                   && r.commits == 0 && r.violations == 0, why(o, r, fu))
+        }
+
+        // SET:FTC_COMMIT's reply lost, or contradicting itself: it may be committing, so the GET's Commit Time is waited out
+        // (the fixture answers again at once afterwards), its ExpectedUID kept, and the commit reported unconfirmed.
+        for (name, lost) in [("commit reply lost", true), ("SET commit contradicts", false)] {
+            let r = uploader(); r.newUID = [0x12, 0x34, 0, 0, 0, 2]; r.dropCommitReply = lost; r.lieCommitCRC = !lost; r.lieOnSetOnly = true
+            let fu = rig(r)
+            let o = fu.run(file: image, testMode: false)
+            let back = r.handle(get, FTC.PID.initiate, [0, 0] + mgrBE16(FTC.version) + [0, 0])
+            check(name, o.code == .commitUnconfirmed && r.commits == 1 && r.saved && r.sent(set, FTC.PID.cancel).isEmpty
+                  && o.result.expectedUID == [0x12, 0x34, 0, 0, 0, 2] && o.result.commitTime == 500 && back != nil && r.violations == 0,
+                  why(o, r, fu))
+        }
+
+        // Declared delays: at most 15 min in all per transfer. 800 s passes; 1000 s in one delay, or 500 s + 500 s, cancels.
+        for (name, initial, busy, pass) in [("waits under 15 min", UInt32(500_000), UInt32(300_000), true),
+                                            ("one wait past 15 min", 1_000_000, 0, false), ("waits add up past 15 min", 500_000, 500_000, false)] {
+            let r = uploader(); r.initialDelay = initial; r.busyPacket = busy > 0 ? 2 : -1; r.busyMs = busy
+            let fu = rig(r)
+            let o = fu.run(file: image, testMode: false)
+            check(name, pass ? o.ok && r.commits == 1 && r.violations == 0
+                             : o.code == .tooSlow && r.sent(set, FTC.PID.cancel).count == 1 && r.commits == 0 && r.violations == 0,
+                  why(o, r, fu))
         }
 
         // A fixture that can't calculate a FileCRC reports 0, which is no disagreement (§13.3.2).
