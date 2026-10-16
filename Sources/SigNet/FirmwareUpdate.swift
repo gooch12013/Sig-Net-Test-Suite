@@ -121,14 +121,23 @@ public final class FirmwareUpdate {
                     guard resends <= Self.maxResends else { throw fail(.tooManyResends, "packet at \(offset)") }
                     try wait(UInt32(d.interPacketDelay))
                 case FTC.RS.statusOK, FTC.RS.transferComplete:
+                    // §13.2.2: DataOffset is our offset plus what the fixture stored, and the transfer goes on from there.
+                    // Past our packet it counts bytes we never sent (a hole in the committed file); behind our offset it
+                    // went backwards; at our offset it stored nothing, so a resend would loop forever. Only an empty
+                    // file's one empty packet may leave it where it was.
+                    let next = Int(mgrU32(r[5...]))
+                    guard next <= offset + chunk.count, next > offset || chunk.isEmpty && next == offset else {
+                        throw fail(.badReply, "DataOffset \(next) after our \(chunk.count) bytes at \(offset)")
+                    }
                     resends = 0
-                    offset += chunk.count
+                    let stored = UInt32(next - offset)
+                    offset = next
                     progress(.transferring, UInt32(offset))
                     if r[0] == FTC.RS.transferComplete { break send } // §9.2: that's the end, whatever we think is left
                     guard offset < file.count else { throw fail(.noTransferComplete, "all \(offset) bytes sent") }
                     try wait(UInt32(d.interPacketDelay))
                     // §8.6.4/§8.6.5: counts file bytes the fixture accepted; the counter restarts at 0 after each delay.
-                    accumulated += UInt32(chunk.count)
+                    accumulated += stored
                     if d.accumulatedByteCount > 0, d.accumulatedByteDelay > 0, accumulated >= d.accumulatedByteCount {
                         accumulated = 0
                         try wait(UInt32(d.accumulatedByteDelay))
@@ -143,16 +152,27 @@ public final class FirmwareUpdate {
             // GET:FTC_COMMIT first, so a failed validation can still be cancelled before anything is saved (§9.4).
             var c = try poll(FTC.getCommand, FTC.PID.commit, commitPD, min: 15)
             guard c[0] == FTC.RS.statusOK else { throw fail(.status, "GET:FTC_COMMIT") }
+            try agrees(c, "GET:FTC_COMMIT") // in doubt: cancel before anything is saved
             progress(.committing, UInt32(file.count))
             c = try poll(FTC.setCommand, FTC.PID.commit, commitPD, min: 15)
             guard c[0] == FTC.RS.statusOK else { sessionOpen = true; throw fail(.status, "SET:FTC_COMMIT") }
             result.commitTime = result.data
-            result.responderCRC = mgrU16(c[7...])
+            try agrees(c, "SET:FTC_COMMIT") // too late to cancel (§9.5), but not a success
             result.expectedUID = Array(c[9..<15]) // recorded for the caller; the transport can't rediscover (§13.3.4)
             progress(.rebooting, UInt32(file.count))
             // §9.4: no traffic during Commit Time, not sliced. §13.3: test mode reports it but doesn't execute it.
             if !testMode { sleep(min(result.commitTime, FTC.maxDelay)) }
         }
+    }
+
+    /// §13.3.2, §13.3.4: an FTC_COMMIT OK that contradicts itself is no OK: a CalculatedFileCRC other than ours (0 = the
+    /// fixture can't calculate one), or CommitFlags that don't echo ours.
+    private func agrees(_ c: [UInt8], _ what: String) throws {
+        result.responderCRC = mgrU16(c[7...])
+        if result.responderCRC != 0, result.responderCRC != result.fileCRC {
+            throw fail(.fileCRCMismatch, "\(what) OK with CalculatedFileCRC 0x\(String(result.responderCRC, radix: 16)), ours 0x\(String(result.fileCRC, radix: 16))")
+        }
+        if mgrU16(c[5...]) != flags { throw fail(.badReply, "\(what) OK with CommitFlags 0x\(String(mgrU16(c[5...]), radix: 16)), ours 0x\(String(flags, radix: 16))") }
     }
 
     // MARK: - Download
@@ -183,6 +203,11 @@ public final class FirmwareUpdate {
                     let r = try poll(FTC.getCommand, FTC.PID.transferDownload, [session, command, 0, 0, 0, 0], min: 8)
                     guard r[0] == FTC.RS.statusOK || r[0] == FTC.RS.transferComplete else { throw fail(.status, "GET:FTC_TRANSFER_DOWNLOAD") }
                     guard r[5] == session else { throw fail(.badReply, "download reply for session \(r[5])") }
+                    // §13.6.1: STATUS_OK says more follows, so an empty one would have us ask forever; §13.6.2: at most a block.
+                    let bytes = r.count - 8
+                    guard bytes <= Int(d.blockSize), bytes > 0 || r[0] == FTC.RS.transferComplete else {
+                        throw fail(.badReply, "\(bytes)-byte download packet, status 0x\(String(r[0], radix: 16)), block \(d.blockSize)")
+                    }
                     if d.capabilities & FTC.Cap.generatePacketCRC != 0, FTC.crc(r.dropLast(2)) != mgrU16(r.suffix(2)) {
                         resends += 1; result.resends += 1
                         guard resends <= Self.maxResends else { throw fail(.tooManyResends, "packet after \(data.count)") }
@@ -376,7 +401,9 @@ public final class FirmwareUpdate {
                 if r.text.hasPrefix("Busy") { Thread.sleep(forTimeInterval: 0.05); continue }
                 let f = r.frame
                 guard ManagerRDM.valid(f), f[20] & 1 == 1 else { return nil }
-                return Reply(type: Int32(f[16]), cc: f[20], pid: mgrU16(f[21...]), pd: Array(f[24..<24 + Int(f[23])]))
+                // Type -1: not an answer to this request (wrong PID, sub-device, length…), which ends the transfer as a bad reply.
+                let answers = ManagerRDM.mismatch(f, dest: dest, cc: cc, pid: pid, sub: 0) == nil
+                return Reply(type: answers ? Int32(f[16]) : -1, cc: f[20], pid: mgrU16(f[21...]), pd: Array(f[24..<24 + Int(f[23])]))
             }
             return nil
         }
@@ -407,7 +434,7 @@ public final class FirmwareUpdate {
         case .tooManyPolls: return "The fixture stayed busy for too long."
         case .noDownload: return "The fixture doesn't offer this file for download."
         case .needKey: return "This file needs a download key, which this app can't send yet."
-        case .fileCRCMismatch: return "The file kept arriving damaged (checksum mismatch after 3 tries)."
+        case .fileCRCMismatch: return "The fixture's checksum of the file didn't match ours."
         }
     }
 

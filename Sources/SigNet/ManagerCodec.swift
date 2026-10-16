@@ -255,6 +255,22 @@ public enum ManagerRDM {
         return f.dropLast(2).reduce(0) { $0 &+ UInt16($1) } == mgrU16(f.suffix(2))
     }
 
+    /// Why response `f` doesn't answer a request to `dest` (E1.20 §6.2.x); nil when it does. It must come from `dest`, with a
+    /// response type up to ACK_OVERFLOW (ACK_TIMER_HI_RES isn't accepted), exactly 2 bytes on a NACK or ACK_TIMER, and the
+    /// request's command class + 1, PID and sub-device. A GET QUEUED_MESSAGE reply carries whichever queued GET or SET
+    /// response it holds, so only its command class is checked.
+    public static func mismatch(_ f: [UInt8], dest: [UInt8], cc: UInt8, pid: UInt16, sub: UInt16) -> String? {
+        let from = Array(f[9..<15]), type = f[16], replyPID = mgrU16(f[21...]), replySub = mgrU16(f[18...])
+        if from != dest { return "from \(uid(from)), asked \(uid(dest))" }
+        if type > 3 { return "response type \(type)" }
+        if type == 1 || type == 2, f[23] != 2 { return "\(type == 1 ? "ACK_TIMER" : "NACK") with \(f[23]) bytes, not 2" }
+        if cc == 0x20, pid == 0x0020 { return f[20] == 0x21 || f[20] == 0x31 ? nil : String(format: "command class 0x%02X", f[20]) }
+        if f[20] != cc &+ 1 { return String(format: "command class 0x%02X to a 0x%02X", f[20], cc) }
+        if replyPID != pid { return String(format: "PID 0x%04X, asked 0x%04X", replyPID, pid) }
+        if replySub != sub { return "sub-device \(replySub), asked \(sub)" }
+        return nil
+    }
+
     public static let pids: [UInt16: String] = [
         0x0050: "SUPPORTED_PARAMETERS", 0x0060: "DEVICE_INFO", 0x0082: "DEVICE_LABEL",
         0x00C0: "SOFTWARE_VERSION_LABEL", 0x00F0: "DMX_START_ADDRESS", 0x1000: "IDENTIFY_DEVICE",

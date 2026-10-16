@@ -125,6 +125,7 @@ open class ManagerEngine {
         let timeout: TimeInterval
         var attempt = 0
         var collected: [ManagerTLV] = []
+        var ackTimerWaited: Double = 0 // seconds of ACK_TIMER estimates already waited out
         let done: (ManagerResult) -> Void
     }
 
@@ -495,15 +496,22 @@ open class ManagerEngine {
             finish(ManagerResult(ok: echoed, text: "EP\(ep): echo [\(names)]\(echoed ? "" : " (echo differs from request!)") + SET_REPLY CHANGE_COUNT \(mgrU16(reply.value[1...]))",
                                  tlvs: p.collected + [reply]))
         case .rdm(let n):
+            let q = p.tlvs[0].value // the request frame
             for r in tlvs where r.tid == 0x0302 && r.value.count >= 26 {
                 let f = r.value
                 guard Array(f[3..<9]) == tuid, f[15] == n else { continue }
+                if let why = ManagerRDM.mismatch(f, dest: Array(q[3..<9]), cc: q[20], pid: mgrU16(q[21...]), sub: mgrU16(q[18...])) {
+                    return finish(ManagerResult(text: "EP\(ep) reply doesn't answer the request (\(why)): " + ManagerRDM.describe(f), frame: f))
+                }
                 guard f[16] != 1 else { // ACK_TIMER: wait longer, don't re-ask (§10.5.4)
+                    // An estimate may say up to 6553 s, with the Manager busy all that time: at most 10 s in all per request.
+                    let wait = max(0, min(Double(mgrU16(f.dropFirst(24))) / 10, 10 - p.ackTimerWaited))
+                    p.ackTimerWaited += wait
                     p.id = UUID() // orphan the running timeout
                     p.attempt = 1
                     pending = p
                     let id = p.id
-                    DispatchQueue.main.asyncAfter(deadline: .now() + Double(mgrU16(f.dropFirst(24))) / 10 + 0.5) { [weak self] in self?.timedOut(id) }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + wait + 0.5) { [weak self] in self?.timedOut(id) }
                     return
                 }
                 return finish(ManagerResult(ok: ManagerRDM.valid(f) && f[16] == 0, text: "EP\(ep) " + ManagerRDM.describe(f), frame: f))

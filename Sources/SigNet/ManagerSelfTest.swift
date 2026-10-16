@@ -229,6 +229,26 @@ extension ManagerEngine {
         guard (try? ManagerPacket.decode(Array(open.encode().dropLast(7)) + [0xFF, 0x06, 0x05, 0x00, 0x00])) == nil else {
             return "KAT: packet without Sig-Net-Auth was accepted"
         }
+        // E1.20 §6.2: what counts as an answer to an RDM request (ManagerRDM.mismatch).
+        let me: [UInt8] = [0x7F, 0xF0, 0, 0, 0, 1], fixture: [UInt8] = [0x12, 0x34, 0, 0, 0, 9]
+        func reply(_ type: UInt8 = 0, cc: UInt8 = 0x21, pid: UInt16 = 0x0082, sub: UInt16 = 0, pd: [UInt8] = [], from: [UInt8]? = nil) -> [UInt8] {
+            var f = ManagerRDM.frame(dest: me, src: from ?? fixture, tn: 1, cc: cc, pid: pid, pd: pd, sub: sub)
+            f[16] = type
+            return f
+        }
+        func answers(_ f: [UInt8], cc: UInt8 = 0x20, pid: UInt16 = 0x0082) -> Bool { ManagerRDM.mismatch(f, dest: fixture, cc: cc, pid: pid, sub: 0) == nil }
+        let rdmCases: [(String, Bool, Bool)] = [
+            ("ACK", answers(reply(pd: [0, 65])), true), ("NACK", answers(reply(2, pd: [0, 6])), true),
+            ("ACK_TIMER", answers(reply(1, pd: [0, 10])), true), ("SET ACK", answers(reply(cc: 0x31), cc: 0x30), true),
+            ("queued SET reply", answers(reply(cc: 0x31, pid: 0x00F0), pid: 0x0020), true),
+            ("other PID", answers(reply(pid: 0x0060)), false), ("other sub-device", answers(reply(sub: 1)), false),
+            ("SET reply to a GET", answers(reply(cc: 0x31)), false), ("NACK with 3 bytes", answers(reply(2, pd: [0, 6, 0])), false),
+            ("ACK_TIMER with 1 byte", answers(reply(1, pd: [10])), false), ("ACK_TIMER_HI_RES", answers(reply(4, pd: [0, 10])), false),
+            ("other source", answers(reply(from: [0x12, 0x34, 0, 0, 0, 8])), false),
+            ("queued reply with a request class", answers(reply(cc: 0x20, pid: 0x00F0), pid: 0x0020), false),
+        ]
+        if let bad = rdmCases.first(where: { $0.1 != $0.2 }) { return "RDM reply check: \(bad.0) \(bad.2 ? "rejected" : "accepted")" }
+
         // §7.5 key file: written uppercase, read in any case (§7.4), 64 hex digits exactly.
         let k = (0..<32).map { UInt8($0 * 7 + 1) }
         let file = String(decoding: KeyFile.encode(k0: k, scope: "tour"), as: UTF8.self)

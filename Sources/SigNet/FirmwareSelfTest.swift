@@ -24,6 +24,11 @@ final class FTCResponder {
     var validationExtra: UInt32 = 0                 // validation runs this long past the declared Validation Delay
     var validationFails = false, refuseCommit: UInt8?
     var damageDownload = -1, badFileCRCOnce = false // download packet n sent with a bad PacketCRC once; wrong FileCRC once
+    // Misbehaviour a controller must catch, not just survive.
+    var shortPacket = -1                            // upload packet n: only half of it stored (DataOffset says so, §13.2.2)
+    var lieOffset: (packet: Int, delta: Int64)?     // upload packet n: stored, but DataOffset reported off by delta
+    var lieCommitCRC = false, lieCommitFlags = false // FTC_COMMIT OK with a CalculatedFileCRC or CommitFlags that disagree
+    var downloadBytes: (packet: Int, count: Int)?   // download packet n carries this many file bytes
     var onRequest: ((UInt8, UInt16, [UInt8]) -> Void)?
 
     // Judgement and counters.
@@ -177,7 +182,9 @@ final class FTCResponder {
         attempts += 1
         if attempts > 4 { violate("packet \(index) sent \(attempts) times, resends limited to 3 (§13.2.2)") }
         if index == damagePacket && damageTimes > 0 { damageTimes -= 1; return r(FTC.RS.packetCRCError, UInt32(crc) << 16 | UInt32(~crc)) }
-        received += data; next += n; attempts = 0; busyAt = nil; accBytes += n
+        let kept = index == shortPacket ? n / 2 : n
+        if index == shortPacket { shortPacket = -1 }
+        received += data.prefix(Int(kept)); next += kept; attempts = 0; busyAt = nil; accBytes += kept
         if next == size {
             complete = true; validatedAt = now + UInt64(validationDelay) + UInt64(validationExtra)
             gate = (now + UInt64(validationDelay), [FTC.PID.commit], "Validation Delay")
@@ -192,6 +199,7 @@ final class FTCResponder {
         if accCount > 0 && accBytes >= accCount {
             gate = (now + UInt64(interPacket) + UInt64(accDelay), [FTC.PID.transferUpload], "Inter-Packet + Accumulated Byte Delay")
         }
+        if let l = lieOffset, l.packet == index { lieOffset = nil; return r(FTC.RS.statusOK, 0, UInt32(truncatingIfNeeded: Int64(next) + l.delta)) }
         return r(FTC.RS.statusOK)
     }
 
@@ -203,7 +211,9 @@ final class FTCResponder {
         let calc = file.caps & FTC.Cap.processFileCRC != 0 ? FTC.crc(received) : 0
         let expected = test ? uid : newUID ?? uid
         func r(_ st: UInt8, _ data: UInt32 = 0) -> FirmwareUpdate.Reply {
-            ack(cc, FTC.PID.commit, [st] + mgrBE32(data) + mgrBE16(cf) + mgrBE16(calc) + expected)
+            let ok = st == FTC.RS.statusOK
+            return ack(cc, FTC.PID.commit, [st] + mgrBE32(data) + mgrBE16(ok && lieCommitFlags ? cf ^ 1 : cf)
+                       + mgrBE16(ok && lieCommitCRC ? calc ^ 0x1234 : calc) + expected)
         }
         if s == FTC.DEF.sessionIDAll { violate("\(what) with FTC_DEF_SESSIONID_ALL (§13.3.1)") }
         guard session != 0, !download else { violate("\(what) with no upload session"); return r(FTC.RS.modalError) }
@@ -272,8 +282,10 @@ final class FTCResponder {
                 attempts += 1
                 if attempts > 3 { violate("packet at \(last) re-requested \(attempts) times, limit 3 (§13.6.1)") }
             }
-            let chunk = Array(file.data[Int(last)..<min(Int(last) + Int(block), file.data.count)])
             let index = Int(last) / Int(block), bad = index == damageDownload
+            var count = Int(block)
+            if let b = downloadBytes, b.packet == index { downloadBytes = nil; count = b.count }
+            let chunk = Array(file.data[Int(last)..<min(Int(last) + count, file.data.count)])
             if bad { damageDownload = -1 }
             next = last + UInt32(chunk.count)
             gate = (now + UInt64(interPacket), [FTC.PID.transferDownload], "Inter-Packet Delay")
@@ -407,6 +419,39 @@ extension FirmwareUpdate {
                   && r.sent(set, FTC.PID.cancel).count == 1 && r.session == 0 && r.violations == 0, why(o, r, fu))
         }
 
+        // The fixture keeps only half a packet: the transfer goes on from the DataOffset it reports (§13.2.2).
+        do {
+            let r = uploader(); r.shortPacket = 2
+            let fu = rig(r)
+            let o = fu.run(file: image, testMode: false)
+            check("short store", o.ok && r.received == image && r.commits == 1 && r.violations == 0, why(o, r, fu))
+        }
+
+        // A DataOffset past the packet, at its start (nothing stored) or behind it: abandoned, never committed.
+        for (name, delta) in [("DataOffset past the packet", Int64(1)), ("DataOffset unmoved", -64), ("DataOffset backwards", -65)] {
+            let r = uploader(); r.lieOffset = (3, delta)
+            let fu = rig(r)
+            let o = fu.run(file: image, testMode: false)
+            check(name, o.code == .badReply && r.sent(set, FTC.PID.cancel).count == 1 && r.session == 0 && r.commits == 0
+                  && r.violations == 0, why(o, r, fu))
+        }
+
+        // FTC_COMMIT OK that contradicts itself (§13.3.2): cancelled after the GET, SET:FTC_COMMIT never sent.
+        for (name, crc, code) in [("commit CRC disagrees", true, Code.fileCRCMismatch), ("commit flags not echoed", false, .badReply)] {
+            let r = uploader(); r.lieCommitCRC = crc; r.lieCommitFlags = !crc
+            let fu = rig(r)
+            let o = fu.run(file: image, testMode: false)
+            check(name, o.code == code && r.sent(set, FTC.PID.commit).isEmpty && r.sent(set, FTC.PID.cancel).count == 1
+                  && r.commits == 0 && r.violations == 0, why(o, r, fu))
+        }
+
+        // A fixture that can't calculate a FileCRC reports 0, which is no disagreement (§13.3.2).
+        do {
+            let r = uploader(upCaps & ~FTC.Cap.processFileCRC), fu = rig(r)
+            let o = fu.run(file: image, testMode: false)
+            check("commit without FileCRC", o.ok && o.result.responderCRC == 0 && r.commits == 1 && r.violations == 0, why(o, r, fu))
+        }
+
         // Single-file fixture: wrong FileID, file too big, test mode not supported.
         do {
             let r = uploader(), fu = rig(r)
@@ -476,6 +521,12 @@ extension FirmwareUpdate {
         down("download cancel", setup: { r, fu in
             r.onRequest = { cc, pid, _ in if pid == FTC.PID.transferDownload && r.sent(cc, pid).count == 3 { fu.cancel() } }
         }) { o, _, r, _ in o.cancelled && r.sent(set, FTC.PID.cancel).count == 1 && r.session == 0 }
+        // STATUS_OK with no data would have us ask forever (§13.6.1); more than a block breaks §13.6.2. Both abandoned.
+        for (name, count) in [("download empty packet", 0), ("download oversized packet", 101)] {
+            down(name, setup: { r, _ in r.downloadBytes = (2, count) }) { o, _, r, _ in
+                o.code == .badReply && r.sent(set, FTC.PID.cancel).count == 1 && r.session == 0
+            }
+        }
         down("download needs key", 4) { o, _, r, _ in o.code == .needKey && r.downloadInitiates == 0 }
         down("download upload-only file", 1) { o, _, r, _ in o.code == .noDownload && r.downloadInitiates == 0 }
         return ok
