@@ -326,14 +326,15 @@ func parameterRow(_ manager: Manager, _ device: ManagerDevice, ep: UInt16, tid: 
     if tid >= 0x8000, tid <= 0xFF00, let m = ManufacturerTIDs.entry(esta: mgrU16(target), tid: tid) {
         return manufacturerRow(manager, device, ep: ep, tid: tid, m)
     }
-    // RT_REBOOT (§11.6.10) and RT_OFFBOARD are commands, not settings: SET only (they can't be read), each with its
-    // fixed magic word, and asked for first.
-    if tid == 0x060A || tid == 0x0401 {
+    if tid == 0x0401 { return offboardRow(manager, device) }
+    // RT_REBOOT (§11.6.10) is a command, not a setting: SET only (it can't be read), with its fixed magic word, and
+    // asked for first.
+    if tid == 0x060A {
         let boot = Array("BOOT".utf8)
-        let options: [(label: String, value: [UInt8], warning: String)] = tid == 0x060A
-            ? [("Restart software", [0xFE] + boot, "The device restarts its software and drops off the network for a moment."),
-               ("Reboot hardware", [0xFF] + boot, "The device reboots completely and is off the network until it's back up.")]
-            : [("Offboard", Array("WIPE".utf8), "The device forgets its passphrase and leaves Secure mode. Devices usually only accept this shortly after power-on.")]
+        let options: [(label: String, value: [UInt8], warning: String)] = [
+            ("Restart software", [0xFE] + boot, "The device restarts its software and drops off the network for a moment."),
+            ("Reboot hardware", [0xFF] + boot, "The device reboots completely and is off the network until it's back up."),
+        ]
         return ReadoutRow(label: ManagerLabels.title(tid), value: nil,
                           set: .choices(options.map(\.label)) { i, done in
                               guard confirm("\(options[i].label)?", options[i].warning, button: options[i].label) else { return done(.refused("Cancelled")) }
@@ -380,6 +381,41 @@ func parameterRow(_ manager: Manager, _ device: ManagerDevice, ep: UInt16, tid: 
                       set: setMode,
                       enabled: manager.running && !manager.busy)
 }
+
+/// §7.7.1 RT_OFFBOARD ("WIPE", alone in its packet). Nodes take it only within 300 s of a physical power-on and drop it
+/// silently after, so the warning says where that window stands, and a silence is checked against the device's
+/// rejected-offboard counter (security event 0x0008) to tell "too late" from "not there".
+private func offboardRow(_ manager: Manager, _ device: ManagerDevice) -> ReadoutRow {
+    let target = device.tuid
+    return ReadoutRow(label: "Offboard", value: nil,
+                      set: .choices(["Offboard"]) { _, done in
+                          let (detail, button) = offboardWarning(device.offboardWindow)
+                          guard confirm("Offboard \(ManagerLabels.displayName(device))?", detail, button: button) else { return done(.refused("Cancelled")) }
+                          manager.set(target, ep: 0, tlvs: [ManagerTLV(tid: 0x0401, value: Array("WIPE".utf8))]) { r in
+                              if r.ok { return done(.latched) }
+                              guard !r.text.hasPrefix("Busy") else { return done(.silent("Busy with another request")) }
+                              manager.get(target, ep: 0, tids: [0xFF01]) { e in
+                                  let late = e.tlvs.first { $0.tid == 0xFF01 && mgrU16($0.value) == 0x0008 }.map { mgrU32($0.value.dropFirst(2)) } ?? 0
+                                  done(late > 0 ? .refused("Refused: the device has turned down \(late) offboard\(late == 1 ? "" : "s") that came too late after power-on")
+                                                : .silent("No confirmation from the device"))
+                              }
+                          }
+                      },
+                      enabled: manager.running && !manager.busy)
+}
+
+private func offboardWarning(_ left: TimeInterval?) -> (detail: String, button: String) {
+    let what = "It deletes its keys and beacons until someone onboards it at the device."
+    guard let left else {
+        return ("\(what)\n\nThe Manager hasn't seen it start up. Devices only accept this within 5 minutes of a power-on, so power-cycle it first. Send anyway to check that it refuses.", "Send anyway")
+    }
+    guard left > 0 else {
+        return ("\(what)\n\nIt started more than 5 minutes ago, so it should refuse. Power-cycle it, then offboard within 5 minutes. Send anyway to check that it refuses.", "Send anyway")
+    }
+    return ("\(what)\n\nIt started up \(clock(300 - left)) ago, so it should accept this for another \(clock(left)), if that was a power-on rather than a software restart.", "Offboard")
+}
+
+private func clock(_ t: TimeInterval) -> String { String(format: "%d:%02d", Int(t) / 60, Int(t) % 60) }
 
 /// A manufacturer TID named in ManufacturerTIDs: its name, and a number in its range (or raw hex) both ways.
 private func manufacturerRow(_ manager: Manager, _ device: ManagerDevice, ep: UInt16, tid: UInt16, _ m: ManufacturerTIDs.Entry) -> ReadoutRow {
@@ -443,7 +479,7 @@ func confirmProtocol(_ manager: Manager, ep: UInt16, value: [UInt8]) -> Bool {
 }
 
 /// A modal warning with Cancel as the default; true = the operator chose `button`.
-private func confirm(_ title: String, _ detail: String, button: String) -> Bool {
+func confirm(_ title: String, _ detail: String, button: String) -> Bool {
     let alert = NSAlert()
     alert.alertStyle = .warning
     alert.messageText = title
@@ -477,6 +513,7 @@ private struct ManagerInfoView: View {
                 ReadoutRow(label: "Last reply", value: device.lastSeen.formatted(date: .omitted, time: .standard))
                 ReadoutRow(label: "Change count", value: device.changeCount.map(String.init))
             }
+            if device.state == "Beacon" { onboarding } else { keys }
             ModulePanel("Health") {
                 parameterRow(manager, device, ep: 0, tid: 0x0608)
                 if events.isEmpty {
@@ -498,7 +535,67 @@ private struct ManagerInfoView: View {
                 ReadoutRow(label: "Product code", value: String(format: "%08X", device.soem))
             }
         }
-        .onAppear { if !eventsChecked, manager.running, !manager.busy { loadEvents { _ in } } }
+        .onAppear { if !eventsChecked, manager.running, !manager.busy, device.state != "Beacon" { loadEvents { _ in } } }
+    }
+
+    /// §7.2: keys never travel over Sig-Net, so onboarding happens at the device; the Manager supplies the passphrase
+    /// (security settings) or a §7.5 key file, then sees the same TUID come back online.
+    private var onboarding: some View {
+        ModulePanel("Onboarding") {
+            Button("Save key file…", action: saveKeyFile)
+                .buttonStyle(.softKey)
+                .disabled(manager.securitySettings.mode != .secure)
+                .help("Write the network's root key as a .equalkeys file, for a device that loads keys from USB or NFC")
+        } content: {
+            ReadoutRow(label: "State", value: "Offboarded: no keys, beaconing")
+            note(manager.securitySettings.mode == .secure
+                 ? "Sig-Net never sends keys over the network. At the device, enter the passphrase from the security settings at the top, or load a key file. It shows up here as online once it has them."
+                 : "Switch to Secure Mode to onboard it: the device needs the passphrase or a key file.")
+        }
+    }
+
+    /// §7.7.1 offboarding, with the power-on the window is counted from.
+    private var keys: some View {
+        ModulePanel("Keys") {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                ReadoutRow(label: "Started up", value: startedUp(context.date))
+            }
+            if supports(0x0401) { offboardRow(manager, device) }
+            note("A device accepts Offboard only within 5 minutes of a power-on. Power-cycle it first; the Manager sees it start up.")
+        }
+    }
+
+    private func startedUp(_ now: Date) -> String {
+        guard let t = device.bootSeen else { return "Not seen since the Manager started" }
+        let left = 300 - now.timeIntervalSince(t), at = t.formatted(date: .omitted, time: .standard)
+        return left > 0 ? "\(at) · offboard window \(clock(left)) left" : "\(at) · offboard window closed"
+    }
+
+    /// What RT_SUPPORTED_TIDS lists; everything when the device hasn't said.
+    private func supports(_ tid: UInt16) -> Bool {
+        guard let v = device.root(0x0601) else { return true }
+        return stride(from: 0, to: v.count - 1, by: 2).contains { mgrU16(v[$0...]) == tid }
+    }
+
+    private func note(_ text: String) -> some View {
+        Text(text).font(.system(size: 11)).foregroundStyle(Color.silk).fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// §7.5: K0 and scope as JSON, owner-only on disk. The save panel says what the file is.
+    private func saveKeyFile() {
+        let s = manager.securitySettings
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(s.scopeOrDefault).equalkeys"
+        panel.message = "This file holds the network's root key: whoever has it controls every device. Wipe the drive once the device has loaded it."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            var k0 = try s.rootKey()
+            defer { wipe(&k0) }
+            try KeyFile.encode(k0: k0, scope: s.scopeOrDefault).write(to: url, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        } catch {
+            NSAlert(error: error).runModal()
+        }
     }
 
     private func loadEvents(_ done: @escaping (Signal) -> Void) {

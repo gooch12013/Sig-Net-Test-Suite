@@ -10,8 +10,8 @@ Mode, so it can test consoles, fixtures and other Managers.
 | --- | --- | --- |
 | Transmit | Sender | Up to 16 universes with faders, universe priority, sync, timecode generator (all 11 rates), preview, test patterns (chase, ramp, random) |
 | Receive | Node (data plane) | Live 512-slot view per universe, merge source count, frame age and rate, timecode streams, preview frames, diagnostics counters, drops by reason, the last 32 rejected packets, library log |
-| Device | Complete Node | A fake fixture that Managers can discover and configure: parameter store with transactions, two proprietary TIDs, a virtual RDM responder per endpoint, offboard and network-change handlers that only log |
-| Manager | Manager | Finds devices and lists them by name. Per device: an overview (identity, connection, health, security events), a settings form with each port's live values and inline editing, RDM fixtures by name (identify, label, start address), filtered traffic, and raw TID/PID tools. Poll options are under Advanced |
+| Device | Complete Node | A fake fixture that Managers can discover and configure: parameter store with transactions, two proprietary TIDs, a virtual RDM responder per endpoint, network-change handlers that only log. Its Keys panel is the fixture's front panel: onboard by passphrase or key file, offboard with the physical reset |
+| Manager | Manager | Finds devices and lists them by name. Per device: an overview (identity, connection, health, security events, keys), a settings form with each port's live values and inline editing, RDM fixtures by name (identify, label, start address), filtered traffic, and raw TID/PID tools. Poll options are under Advanced |
 
 Every role is written in Swift from the spec (*Sig-Net Protocol Framework
 V1.10*), using swift-crypto for HMAC-SHA256 and HKDF. Packets are checked byte
@@ -119,6 +119,29 @@ have rejected the new session counters as replays. Self-tests use their own
 - **A Manager:** run Device. The log shows every parameter and RDM request it
   receives.
 
+## Onboarding and offboarding
+
+This follows the core spec (PF §7.2, §7.5, §7.7). Keys never travel over
+Sig-Net, so a device is onboarded at the device itself.
+
+- **Offboard from the Manager.** Info › Keys shows when the Manager last saw
+  the device start up and how much of its 5-minute offboard window is left
+  (§7.7.1). Power-cycle the device, then press Offboard. A device that ignores
+  a late Offboard is reported as refusing it, from its rejected-offboard
+  counter. The Manager can't tell a power-on from a software restart, so the
+  window is a guess.
+- **Onboard a beaconing device.** Its Info tab shows Onboarding. Enter the
+  passphrase from the security settings on the device, or use Save key file to
+  write a `.equalkeys` file (§7.5) for a device that loads keys from USB or NFC.
+  The device turns green in the rack once it has the keys.
+- **The Device tab as the fixture.** In Secure Mode its Keys panel takes a
+  passphrase (each broken rule is named) or a key file, and has the physical
+  Offboard button (§7.7.2), which works at any time. Offboarding is saved, so the
+  Device restarts beaconing, as a real fixture would after a power cycle.
+  When it starts onboarded, it uses the app's passphrase as its stored keys.
+  Turn on Behaviour › Simulate fresh power-on to let a Manager offboard it over
+  the network.
+
 All parts can run at once. They share UDP port 5683 and see each other's
 traffic through multicast loopback, which is how the self-test works.
 
@@ -150,6 +173,7 @@ Then, in Open and Secure Mode, over multicast loopback inside one process:
 - The Sender heard by a plain socket: signatures, sequence numbers, priority, sync, timecode, on-boot announce and TID_UNIVERSE.
 - The Device booting twice (the second boot bumps the persisted Session ID).
 - The Manager discovering another Manager, then the Device: GET/SET of its label, refusal detection, Table of Devices, RDM DEVICE_INFO and (Secure) rejection of a wrong passphrase.
+- (Secure) Onboard and offboard: the Manager sees the Device start up, offboards it inside the window, the Device beacons and stays offboarded across a restart, then onboards by passphrase and by key file; a late offboard is refused.
 - Sender to Receiver: multiple universes, priority merging, sync, timecode, preview, and (Secure) rejection of an Open-Mode Sender and of a wrong passphrase.
 
 `--offline` stops after the offline checks. CI uses it on all three platforms,
@@ -190,7 +214,7 @@ client waits for a server to start.
 | `get_parameters`, `set_parameter` | TID GET and SET on any endpoint |
 | `rdm_devices`, `rdm_get`, `rdm_set` | A port's Table of Devices, and RDM through it |
 | `transmit`, `receive` | Send levels or a test pattern; listen to universes and report levels, sources, timecode and drop counters |
-| `virtual_device` | Runs the Device tab's Node inside the server, so everything can be tried without hardware |
+| `virtual_device` | Runs the Device tab's Node inside the server, so everything can be tried without hardware; `offboard` and `onboard` work its front panel |
 | `logs` | The Manager's packet log (raw bytes on request), the Receiver's log and rejected-packet headers, the virtual Node's log |
 | `selftest`, `probe` | The self-test and the probe above |
 

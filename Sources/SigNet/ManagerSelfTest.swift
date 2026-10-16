@@ -102,6 +102,62 @@ extension ManagerEngine {
         return nil
     }
 
+    /// Secure Mode keys lifecycle, Manager against Device (PF §7.2, §7.5, §7.7): the Manager sees the power-on, offboards
+    /// inside the window, the Device beacons and stays offboarded across a restart, then onboards from its front panel
+    /// (a bad passphrase named, the right one taken) and from a key file; a late offboard is refused. nil = pass.
+    public static func onboardingLoopTest(settings s: SecurityConfig) -> String? {
+        let dev = DeviceEngine(settings: s, tuid: Identity.tuid("selftest-device"))
+        let flag = dev.stateKey + ".offboarded"
+        UserDefaults.standard.removeObject(forKey: flag)
+        defer { UserDefaults.standard.removeObject(forKey: flag) }
+        let m = ManagerEngine(settings: s, tuid: Identity.tuid("selftest-manager"))
+        m.heartbeat = false
+        m.start()
+        guard m.running else { return "start: \(m.status)" }
+        defer { m.stop() }
+        let id = Identity.hex(dev.tuid)
+        func boot(fresh: Bool) -> String? {
+            dev.stop()
+            dev.freshPowerOn = fresh
+            dev.start()
+            guard dev.running else { return "device did not start: \(dev.status)" }
+            spin(2.1) { false } // §8.6.4: no SETs for 2 s after link-up
+            return nil
+        }
+        func offboard() -> ManagerResult? { wait { m.set(dev.tuid, ep: 0, tlvs: [ManagerTLV(tid: 0x0401, value: Array("WIPE".utf8))], done: $0) } }
+        func online() -> Bool { m.devices[id].map { $0.state == "Online" && $0.auth == "OK" } ?? false }
+        defer { dev.stop() }
+
+        m.forget(id)
+        if let why = boot(fresh: true) { return why }
+        guard let seen = m.devices[id]?.bootSeen, let left = m.devices[id]?.offboardWindow, left > 290 else {
+            return "the Manager didn't see the on-boot announce (bootSeen \(String(describing: m.devices[id]?.bootSeen)))"
+        }
+        guard let r = offboard(), r.ok, dev.offboarded else { return "offboard in the window: \(m.result)" }
+        spin(2) { m.devices[id]?.state == "Beacon" }
+        guard m.devices[id]?.state == "Beacon" else { return "no beacon after offboard (state \(m.devices[id]?.state ?? "gone"))" }
+
+        if let why = boot(fresh: false) { return why }
+        guard dev.offboarded else { return "a restart brought the keys back" }
+        guard dev.onboard(passphrase: "Short-1") != nil else { return "front panel took a passphrase that breaks the rules" }
+        if let why = dev.onboard(passphrase: s.passphrase) { return "front-panel onboard: \(why)" }
+        spin(2) { online() && m.devices[id]?.bootSeen != seen }
+        guard online() else { return "not online after onboarding (state \(m.devices[id]?.state ?? "gone"), auth \(m.devices[id]?.auth ?? ""))" }
+
+        dev.physicalOffboard()
+        guard dev.offboarded else { return "physical offboard didn't take" }
+        guard var k0 = try? s.rootKey() else { return "K0 derivation failed" }
+        let file = KeyFile.encode(k0: k0, scope: s.scopeOrDefault)
+        wipe(&k0)
+        guard dev.onboard(keyFile: Data("{}".utf8)) != nil else { return "took a key file without keys" }
+        if let why = dev.onboard(keyFile: file) { return "key-file onboard: \(why)" }
+        guard let g = wait({ m.get(dev.tuid, ep: 0, tids: [0x0605], done: $0) }), g.ok else { return "GET after key-file onboard: \(m.result)" }
+
+        if let why = boot(fresh: false) { return why } // app start, not a power-on: the window is closed
+        guard let late = offboard(), !late.ok, !dev.offboarded else { return "a late offboard was accepted" }
+        return nil
+    }
+
     public static func spin(_ secs: Double, until ok: () -> Bool) {
         let end = Date().addingTimeInterval(secs)
         while Date() < end, !ok() { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
@@ -173,6 +229,11 @@ extension ManagerEngine {
         guard (try? ManagerPacket.decode(Array(open.encode().dropLast(7)) + [0xFF, 0x06, 0x05, 0x00, 0x00])) == nil else {
             return "KAT: packet without Sig-Net-Auth was accepted"
         }
+        // §7.5 key file: written uppercase, read in any case (§7.4), 64 hex digits exactly.
+        let k = (0..<32).map { UInt8($0 * 7 + 1) }
+        let file = String(decoding: KeyFile.encode(k0: k, scope: "tour"), as: UTF8.self)
+        guard file.contains(Identity.hex(k)), let back = try? KeyFile.decode(Data(file.lowercased().utf8)), back.k0 == k, back.scope == "tour",
+              (try? KeyFile.decode(Data(#"{"sig-net_equal_keys":{"k0":"ABCD"}}"#.utf8))) == nil else { return "key file round trip" }
         return nil
     }
 }

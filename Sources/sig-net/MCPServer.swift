@@ -376,26 +376,33 @@ enum MCPServer {
         },
 
         Tool(name: "virtual_device",
-             description: "Runs the suite's built-in Sig-Net Node (the app's Device tab) inside the server, so the other tools can be tried without hardware. It answers discovery, GET/SET and RDM like a real Node.",
-             params: ["action": ["type": "string", "enum": ["start", "stop", "status"]],
+             description: "Runs the suite's built-in Sig-Net Node (the app's Device tab) inside the server, so the other tools can be tried without hardware. It answers discovery, GET/SET and RDM like a real Node. In Secure Mode, offboard presses its physical reset (keys deleted, it beacons, any time) and onboard enters the server's passphrase at its front panel; a network RT_OFFBOARD is only accepted within 300 s of a start with fresh_power_on.",
+             params: ["action": ["type": "string", "enum": ["start", "stop", "status", "offboard", "onboard"]],
                       "label": p("string", "Device label to start with"),
-                      "ports": p("integer", "Number of ports, 1-8 (default 2)")],
+                      "ports": p("integer", "Number of ports, 1-8 (default 2)"),
+                      "fresh_power_on": p("boolean", "Start as after a physical power-on, so RT_OFFBOARD is accepted for 300 s (default false)")],
              required: ["action"]) { a in
             try onMain { () -> [String: Any] in
                 switch a["action"] as? String {
                 case "start":
                     // The Node reads its label and port count when it starts, so a change restarts it.
-                    if node.running, a["label"] != nil || a["ports"] != nil { node.stop() }
+                    if node.running, a["label"] != nil || a["ports"] != nil || a["fresh_power_on"] != nil { node.stop() }
                     if let label = a["label"] as? String { node.label = label }
                     if let n = number(a["ports"]) { node.endpointCount = min(8, max(1, Int(n))) }
+                    if let fresh = a["fresh_power_on"] as? Bool { node.freshPowerOn = fresh }
                     if !node.running { node.start() }
                     guard node.running else { throw SigNetError(node.status) }
                 case "stop": node.stop()
                 case "status": break
-                default: throw SigNetError("action: start, stop or status")
+                case "offboard":
+                    guard settings.mode == .secure else { throw SigNetError("Open Mode has no keys to offboard") }
+                    node.physicalOffboard()
+                case "onboard":
+                    if let why = node.onboard(passphrase: settings.passphrase) { throw SigNetError(why) }
+                default: throw SigNetError("action: start, stop, status, offboard or onboard")
                 }
                 return ["running": node.running, "status": node.status, "tuid": Identity.hex(node.tuid), "label": node.label,
-                        "ports": node.endpointCount, "log": Array(node.log.suffix(10))]
+                        "ports": node.endpointCount, "offboarded": node.offboarded, "log": Array(node.log.suffix(10))]
             }
         },
 

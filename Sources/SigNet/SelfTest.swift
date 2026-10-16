@@ -29,6 +29,7 @@ public enum SelfTest {
             report("sender loop \(tag)", TransmitterEngine.loopTest(settings: s))
             report("device \(tag)", DeviceEngine.selfTest(settings: s))
             report("manager+device \(tag)", ManagerEngine.deviceLoopTest(settings: s))
+            if mode == .secure { report("onboard and offboard", ManagerEngine.onboardingLoopTest(settings: s)) }
             for (label, why) in loopback(s) { report("loopback \(label) \(tag)", why) }
         }
         return failed ? 1 : 0

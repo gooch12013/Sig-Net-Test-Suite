@@ -10,11 +10,12 @@ let settings = SecuritySettings()
 settings.interface = UserDefaults.standard.string(forKey: "interface") ?? "" // GUI only; selftest/probe start from the OS default
 let transmitter = Transmitter(settings: settings)
 let receiver = Receiver(settings: settings)
-let fakeDevice = FakeDevice(settings: settings)
 /// What RDM has learned about fixtures; Manager fills it, Transmit labels its faders from it.
 let fixtureStore = FixtureStore()
-// Snapshot runs get their own TUID so they never collide with a running GUI Manager on the same node.
-let manager = Manager(settings: settings, tuid: Identity.tuid(Snapshot.args.contains("--snapshot") ? "snapshot" : "manager-v2"))
+// Snapshot runs get their own TUIDs so they never collide with a running GUI Manager or Device on the same node.
+let snapshotRun = Snapshot.args.contains("--snapshot")
+let fakeDevice = FakeDevice(settings: settings, tuid: Identity.tuid(snapshotRun ? "snapshot-device" : "device-v2"))
+let manager = Manager(settings: settings, tuid: Identity.tuid(snapshotRun ? "snapshot" : "manager-v2"))
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_: Notification) {
@@ -23,7 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Snapshot.render = {
             AnyView(AppView(settings: settings, transmitter: transmitter, receiver: receiver, device: fakeDevice, manager: manager, fixtures: fixtureStore))
         }
-        Snapshot.configure(settings: settings, manager: manager, fixtures: fixtureStore)
+        Snapshot.configure(settings: settings, manager: manager, device: fakeDevice, fixtures: fixtureStore)
     }
     func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool { true }
     func applicationWillTerminate(_: Notification) {

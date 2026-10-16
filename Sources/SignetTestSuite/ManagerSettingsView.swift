@@ -12,9 +12,9 @@ struct ManagerSettingsView: View {
     private static let networkOrder: [UInt16] = [0x0501, 0x0502, 0x0503, 0x0504, 0x0505, 0x0506, 0x0581, 0x0582, 0x0583, 0x0584, 0x0585]
     private static let portOrder: [UInt16] = [0x0901, 0x0902, 0x0905, 0x090C, 0x0907, 0x090B, 0x0908, 0x0909, 0x0906, 0x0903,
                                               0x0904, 0x090A, 0x0305, 0x0306, 0xFF03]
-    /// On the Info tab already (Device and Health), the supported list itself, and RDM discovery (the RDM tab sends it):
-    /// not repeated under Other parameters.
-    private static let elsewhere: [UInt16] = [0x0601, 0x0602, 0x0603, 0x0604, 0x0608, 0x0609, 0x060B, 0xFF01, 0x0303]
+    /// On the Info tab already (Device, Health and Keys), the supported list itself, and RDM discovery (the RDM tab
+    /// sends it): not repeated under Other parameters.
+    private static let elsewhere: [UInt16] = [0x0601, 0x0602, 0x0603, 0x0604, 0x0608, 0x0609, 0x060B, 0xFF01, 0x0303, 0x0401]
 
     /// What the device reports it supports; everything when it hasn't said yet.
     private var supported: Set<UInt16>? {

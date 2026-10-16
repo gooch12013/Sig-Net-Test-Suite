@@ -11,11 +11,16 @@ public struct ManagerDevice: Identifiable {
     public var state = "Online"
     public var auth = ""
     public var anomaly = ""
+    /// When its last on-boot announce arrived (§10.2.5). A Node only accepts Offboard for 300 s after a physical
+    /// power-on (§7.7.1); a software reboot announces too but doesn't reopen that window, so this is a best guess.
+    public var bootSeen: Date?
     public var params: [UInt16: [UInt16: [UInt8]]] = [:] // ep → tid → last value seen
     public var tod: [UInt16: [[UInt8]]] = [:]           // ep → UIDs
     public var rdm: [String] = []                       // RDM responses seen (newest last)
 
     public func root(_ tid: UInt16) -> [UInt8]? { params[0]?[tid] }
+    /// Seconds of the offboard window left if `bootSeen` was a power-on (negative once closed); nil = no announce seen.
+    public var offboardWindow: TimeInterval? { bootSeen.map { 300 - Date().timeIntervalSince($0) } }
     public func text(_ tid: UInt16) -> String { root(tid).map { ManagerTID.describe(tid, $0) } ?? "–" }
     public var label: String { root(0x0605).map { String(decoding: $0.dropFirst(), as: UTF8.self) } ?? "" }
     public var model: String { root(0x060B).map { String(decoding: $0.dropFirst(), as: UTF8.self) } ?? "" }
@@ -420,6 +425,11 @@ open class ManagerEngine {
         d.ip = ip
         d.auth = auth
         let presence = tlvs.contains { $0.tid == 0x0002 }
+        // §10.2.5: the announce is exactly these TLVs in this order (+ RT_OTW_CAPABILITY); no poll reply looks like it.
+        let ids = tlvs.map(\.tid)
+        if uri.kind == "node", Array(ids.prefix(5)) == [0x0002, 0x0603, 0x0609, 0x0602, 0x0606], ids.count == 5 || ids.count == 6 && ids[5] == 0x060D {
+            d.bootSeen = Date()
+        }
         if presence || uri.kind != "node" { d.lastSeen = Date() }
         switch uri.kind {
         case "node_lost": d.state = heartbeat && d.state.hasPrefix("Online") ? "node_lost while Online: polls not reaching it" : "node_lost"

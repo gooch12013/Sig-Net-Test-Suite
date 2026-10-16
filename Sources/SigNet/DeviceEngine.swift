@@ -33,13 +33,16 @@ open class DeviceEngine {
     public private(set) var identifying: [Bool] = [] { willSet { willChange() } }
     public private(set) var live: [Live] = [] { willSet { willChange() } }
     public private(set) var changeCount: UInt16 = 0 { willSet { willChange() } }
+    /// No keys: beacons only (§10.2.1). Saved, so it outlives a restart as it would a power cycle (§7.7); only
+    /// onboarding clears it. Honoured in Secure Mode only: Open Mode has no keys to lose (§7.2.4).
+    public private(set) var offboarded = false { willSet { willChange() } }
 
     /// Called before any property above changes.
     open func willChange() {}
 
     private var socket: UDPSocket?
     private var timer: Timer?
-    private var keys: ManagerKeys?
+    private var kmGlobal: SymmetricKey?, kc: SymmetricKey?
     private var kmLocal: SymmetricKey?
     private var ks: SymmetricKey?
     private var secure = false, scope = "local", n = 0
@@ -51,7 +54,7 @@ open class DeviceEngine {
     private var fresh = Freshness()
     private var events: [UInt16: (count: UInt32, ip: [UInt8], sent: Date)] = [:]
     private var bootedAt = Date(), powerOn = Date(), lastPoll = Date(), lastLost = Date(), lastBeacon = Date()
-    private var lost = false, offboarded = false
+    private var lost = false
     private var replyGen = 0 // §10.2.3 reply supersession: delayed replies of an older generation are dropped
     private var sources: [[String: (levels: [UInt8], seen: Date)]] = [] // per data EP, by Sender-ID
     private var merged: [[UInt8]] = []                                  // per data EP, held on stream loss
@@ -63,6 +66,7 @@ open class DeviceEngine {
     public init(settings: SecurityConfig, tuid: [UInt8] = Identity.tuid("device-v2")) {
         self.settings = settings
         self.tuid = tuid
+        offboarded = storedOffboarded
     }
 
     // MARK: - Lifecycle
@@ -76,10 +80,11 @@ open class DeviceEngine {
         }
         running = true
         settings.deviceStarted()
-        status = "Running · \(n) endpoints · \(settings.mode.rawValue) Mode · scope \(scope)" + (secure ? " · session \(session)" : "")
-        append("Started, TUID \(Identity.hex(tuid))")
+        status = offboarded ? "Running · offboarded, beaconing"
+            : "Running · \(n) endpoints · \(settings.mode.rawValue) Mode · scope \(scope)" + (secure ? " · session \(session)" : "")
+        append("Started, TUID \(Identity.hex(tuid))" + (offboarded ? ", offboarded: beaconing until onboarded" : ""))
         timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in self?.tick() }
-        after(Double.random(in: 0...1)) { $0.transmit("node", lane: 0, $0.presence(), to: "239.254.255.253") } // §10.2.5
+        after(Double.random(in: 0...1)) { $0.offboarded ? $0.beacon() : $0.announce() }
     }
 
     public func stop() {
@@ -87,9 +92,7 @@ open class DeviceEngine {
         timer = nil
         socket?.close()
         socket = nil
-        keys = nil
-        kmLocal = nil
-        ks = nil
+        (kmGlobal, kc, kmLocal, ks) = (nil, nil, nil, nil)
         network = nil
         replyGen += 1
         if running {
@@ -98,7 +101,7 @@ open class DeviceEngine {
             settings.deviceStopped()
         }
         running = false
-        offboarded = false
+        offboarded = storedOffboarded
         identifying = identifying.map { _ in false }
     }
 
@@ -107,19 +110,16 @@ open class DeviceEngine {
         secure = settings.mode == .secure
         scope = settings.scopeOrDefault
         n = min(8, max(1, endpointCount))
-        if secure {
-            var k0 = try settings.rootKey()
-            ks = SigNetKeys.sender(k0: k0)
-            var k = ManagerKeys(k0: &k0) // wipes k0
-            kmLocal = k.kmLocal(tuid)
-            keys = k
+        offboarded = secure && storedOffboarded
+        if secure, !offboarded {
+            var k0 = try settings.rootKey() // the app's passphrase stands in for the keys a real Node keeps
+            derive(&k0)
             try bumpSession()
         }
         seqs = [:]
         fresh = Freshness()
         events = [:]
         lost = false
-        offboarded = false
         let d = UserDefaults.standard
         changeCount = UInt16(clamping: d.integer(forKey: stateKey + ".cc"))
         // Factory defaults, then the persisted store (NVR stand-in); the panel's label and universes win (front-panel edits).
@@ -155,7 +155,15 @@ open class DeviceEngine {
         lastPoll = bootedAt
     }
 
-    private var stateKey: String { "device.\(Identity.hex(tuid))" }
+    var stateKey: String { "device.\(Identity.hex(tuid))" }
+    private var storedOffboarded: Bool { UserDefaults.standard.bool(forKey: stateKey + ".offboarded") }
+
+    /// §7.3, §7.6: a Node keeps Kc, Ks, Km_global and its own Km_local, never K0. Wipes `k0`.
+    private func derive(_ k0: inout [UInt8]) {
+        ks = SigNetKeys.sender(k0: k0)
+        var k = ManagerKeys(k0: &k0) // wipes k0; its copy of K0 goes when `k` does
+        (kmGlobal, kc, kmLocal) = (k.kmGlobal, k.kc, k.kmLocal(tuid))
+    }
 
     /// §8.3: load, +1, persist, and only then send. Open Mode is exempt.
     private func bumpSession() throws {
@@ -261,7 +269,7 @@ open class DeviceEngine {
         guard s.count >= 4, s[0] == "sig-net", s[1] == "v1", s[2] == scope else { return } // steps 5, 6a
         if s[3] == "level" { return level(p, s, ip) }
         guard let uri = try? ManagerURI(s), uri.kind == "poll" || uri.kind == "manager" && uri.tuid == tuid else { return } // 6b
-        guard authentic(p, uri.kind == "poll" ? keys?.kmGlobal : kmLocal, ip), let tlvs = ManagerTLV.decode(p.payload) else { return }
+        guard authentic(p, uri.kind == "poll" ? kmGlobal : kmLocal, ip), let tlvs = ManagerTLV.decode(p.payload) else { return }
         if uri.kind == "poll" { poll(tlvs) } else { command(p, uri.ep, tlvs, ip) }
     }
 
@@ -332,6 +340,8 @@ open class DeviceEngine {
     private func presence() -> [ManagerTLV] {
         [pollReply()] + [0x0603, 0x0609, 0x0602, 0x0606].flatMap { values($0, 0) }
     }
+
+    private func announce() { transmit("node", lane: 0, presence(), to: "239.254.255.253") } // §10.2.5
 
     private func beacon() { // §10.2.1
         lastBeacon = Date()
@@ -544,13 +554,70 @@ open class DeviceEngine {
     /// §7.7: reply first (done), then wipe keys, reset CHANGE_COUNT and beacon. Session ID persists unchanged.
     private func offboard() {
         offboarded = true
-        keys = nil
-        kmLocal = nil
+        (kmGlobal, kc, kmLocal, ks) = (nil, nil, nil, nil)
         lost = false
         changeCount = 0
         persist()
-        append("OFFBOARDED: keys wiped, now beaconing. Stop and start the device to onboard it again.")
+        if secure { UserDefaults.standard.set(true, forKey: stateKey + ".offboarded") }
+        status = "Running · offboarded, beaconing"
+        append(secure ? "OFFBOARDED: keys wiped, now beaconing until onboarded at the device (passphrase or key file)."
+                      : "OFFBOARDED: now beaconing. Stop and start the device to leave beacon mode (Open Mode has no keys).")
         beacon()
+    }
+
+    // MARK: - Front panel (§7.2, §7.7.2): what an engineer does at the fixture itself
+
+    /// §7.7.2: the recessed reset button. No lockout, because physical access is the authority. Works stopped too,
+    /// like a fixture's menu with the network unplugged.
+    public func physicalOffboard() {
+        guard !offboarded else { return }
+        guard running else {
+            offboarded = true
+            UserDefaults.standard.set(true, forKey: stateKey + ".offboarded")
+            return append("Physical offboard while stopped: starts beaconing")
+        }
+        append("Physical offboard (front panel)")
+        offboard()
+    }
+
+    /// §7.2.3 passphrase entry on the fixture. nil = onboarded, else the rule or step that failed.
+    public func onboard(passphrase: String) -> String? {
+        if let why = SecurityConfig.passphraseProblem(passphrase) { return why }
+        guard running, secure, offboarded else { return notOffboarded }
+        do { return onboard(k0: try SecurityConfig.rootKey(passphrase), scope: settings.scopeOrDefault, how: "passphrase") }
+        catch { return "\(error)" }
+    }
+
+    /// §7.5 electronic transfer: K0 and scope from a key file (USB drive, NFC).
+    public func onboard(keyFile: Data) -> String? {
+        guard running, secure, offboarded else { return notOffboarded }
+        do {
+            let f = try KeyFile.decode(keyFile)
+            return onboard(k0: f.k0, scope: f.scope, how: "key file")
+        } catch { return "\(error)" }
+    }
+
+    private var notOffboarded: String {
+        !running ? "Start the device first" : !secure ? "Open Mode has no keys" : "Already onboarded: offboard it first"
+    }
+
+    /// Derive and keep the role keys, discard K0 (§7.3.2), then announce as after a boot (§10.2.5).
+    private func onboard(k0: [UInt8], scope newScope: String, how: String) -> String? {
+        var k0 = k0
+        derive(&k0)
+        do { try bumpSession() } catch {
+            (kmGlobal, kc, kmLocal, ks) = (nil, nil, nil, nil)
+            return "\(error)"
+        }
+        scope = newScope
+        fresh = Freshness()
+        lastPoll = Date()
+        offboarded = false
+        UserDefaults.standard.removeObject(forKey: stateKey + ".offboarded")
+        status = "Running · \(n) endpoints · Secure Mode · scope \(scope) · session \(session)"
+        append("ONBOARDED by \(how): role keys derived, K0 discarded, scope \(scope), session \(session)")
+        announce()
+        return nil
     }
 
     /// Same path as a Manager SET (persists, bumps CHANGE_COUNT, publishes).
@@ -657,7 +724,7 @@ open class DeviceEngine {
         p.payload = ManagerTLV.encode(tlvs)
         if !offboarded, tlvs.contains(where: { (0x8000...0xFF00).contains($0.tid) }) { p.mfg = Self.esta }
         if secure, !offboarded {
-            guard let kc = keys?.kc else { return }
+            guard let kc else { return }
             if seqs[lane, default: 0] >= 0xFFFF_FFFE { // §8.3 wrap: new session, every lane back to 1
                 do { try bumpSession() } catch { status = "\(error)"; return }
             }

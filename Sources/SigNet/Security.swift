@@ -54,7 +54,9 @@ open class SecurityConfig {
     public static let symbols = "!@#$%^&*()-_=+[]{}|;:',.<>?/"
 
     /// PF §7.2.3 requires feedback naming the failed rule. nil = valid.
-    public var passphraseProblem: String? {
+    public var passphraseProblem: String? { Self.passphraseProblem(passphrase) }
+
+    public static func passphraseProblem(_ passphrase: String) -> String? {
         let p = passphrase.utf8.map(Int.init)
         let symbols = Set(Self.symbols.utf8.map(Int.init))
         let classes = [(65...90).contains, (97...122).contains, (48...57).contains, symbols.contains]
@@ -80,6 +82,10 @@ open class SecurityConfig {
     /// PBKDF2-HMAC-SHA256, 100 000 iterations, salt "Sig-Net-K0-Salt-v1" (PF §7.2.3); one 32-byte block.
     public func rootKey() throws -> [UInt8] {
         guard mode == .secure else { return [] }
+        return try Self.rootKey(passphrase)
+    }
+
+    public static func rootKey(_ passphrase: String) throws -> [UInt8] {
         guard !passphrase.isEmpty else { throw SigNetError("Key derivation failed: empty passphrase") }
         let keyed = HMAC<SHA256>(key: SymmetricKey(data: Array(passphrase.utf8)))
         func mac(_ m: [UInt8]) -> [UInt8] {
@@ -95,6 +101,25 @@ open class SecurityConfig {
         }
         wipe(&u)
         return k0
+    }
+}
+
+/// PF §7.5 machine-readable K0 transfer (USB drive, NFC): `{"sig-net_equal_keys": {"scope": "local", "k0": "<64 hex>"}}`,
+/// saved as `.equalkeys`. Written in uppercase, read in any case (§7.4).
+public enum KeyFile {
+    public static func encode(k0: [UInt8], scope: String) -> Data {
+        let body = ["sig-net_equal_keys": ["scope": scope, "k0": Identity.hex(k0)]]
+        return (try? JSONSerialization.data(withJSONObject: body, options: [.prettyPrinted, .sortedKeys])) ?? Data()
+    }
+
+    /// K0 and scope, or an error naming what is wrong with the file. The caller wipes K0.
+    public static func decode(_ data: Data) throws -> (k0: [UInt8], scope: String) {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let keys = root["sig-net_equal_keys"] as? [String: Any] else { throw SigNetError("Not a Sig-Net key file: no sig-net_equal_keys object") }
+        guard let hex = keys["k0"] as? String, hex.count == 64, hex.allSatisfy(\.isHexDigit), let k0 = mgrBytes(hex: hex)
+        else { throw SigNetError("The key file's k0 is not 64 hexadecimal characters") }
+        let scope = keys["scope"] as? String ?? ""
+        return (k0, scope.isEmpty ? "local" : scope)
     }
 }
 

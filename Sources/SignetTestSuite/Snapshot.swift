@@ -3,7 +3,7 @@ import SigNet
 import SwiftUI
 
 /// Developer aid for looking at the UI without Screen Recording permission:
-///   SignetTestSuite --tab manager --passphrase <p> --interface <ip> --start-manager --snapshot out.png [--after 6]
+///   SignetTestSuite --tab manager --passphrase <p> --interface <ip> --start-manager [--start-device] --snapshot out.png [--after 6]
 /// sets up the app, waits, writes the window to a PNG and quits.
 enum Snapshot {
     static let args = CommandLine.arguments
@@ -15,7 +15,7 @@ enum Snapshot {
     /// The view to render; set by main.swift.
     static var render: () -> AnyView = { AnyView(EmptyView()) }
 
-    static func configure(settings: SecuritySettings, manager: Manager, fixtures: FixtureStore) {
+    static func configure(settings: SecuritySettings, manager: Manager, device: FakeDevice, fixtures: FixtureStore) {
         if args.contains("--demo-channels") {
             // Synthetic fixture for checking the Transmit channel headings in a snapshot; never used by the app itself.
             var f = FixtureStore.Fixture()
@@ -28,6 +28,7 @@ enum Snapshot {
         if let s = arg("--scope") { settings.scope = s }
         if let i = arg("--interface") { settings.interface = i }
         if args.contains("--start-manager") { DispatchQueue.main.async { manager.start() } }
+        if args.contains("--start-device") { DispatchQueue.main.async { device.start() } }
         guard let path = arg("--snapshot") else { return }
         let delay = Double(arg("--after") ?? "6") ?? 6
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
@@ -46,6 +47,7 @@ enum Snapshot {
                     print("snapshot: \(error)")
                 }
                 manager.stop()
+                device.stop()
                 exit(0)
             }
         }

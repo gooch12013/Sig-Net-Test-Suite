@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import SigNet
 import SwiftUI
@@ -47,6 +48,7 @@ struct DeviceView: View {
 
     private var statusText: String {
         guard device.running else { return device.status }
+        if device.offboarded { return "Running · offboarded, beaconing every 5 s" }
         let n = device.live.count
         return "Running · \(n) port\(n == 1 ? "" : "s") · \(settings.mode.rawValue) Mode · scope \(settings.scopeOrDefault)"
     }
@@ -94,6 +96,15 @@ struct DeviceView: View {
             .frame(minWidth: 52)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(device.running ? "Running" : "Stopped")
+            if settings.mode == .secure {
+                VStack(spacing: 5) {
+                    Lamp(color: device.offboarded ? nil : .lampLatch, size: 10)
+                    Silkscreen("Keys")
+                }
+                .frame(minWidth: 40)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(device.offboarded ? "Offboarded, no keys" : "Onboarded")
+            }
             portLamps
         }
         .padding(.horizontal, 16).padding(.vertical, 12)
@@ -142,6 +153,7 @@ struct DeviceView: View {
     private var panel: some View {
         VStack(alignment: .leading, spacing: 12) {
             identity
+            if settings.mode == .secure { keys }
             ports
             behaviour
         }
@@ -177,6 +189,53 @@ struct DeviceView: View {
             if device.running {
                 note("Model name and firmware are fixed while running. Stop the device to change them.")
             }
+        }
+    }
+
+    /// The fixture's own front panel: Sig-Net never takes keys over the network (§7.2), so onboarding happens here,
+    /// and so does the physical offboard every device must have (§7.7.2).
+    private var keys: some View {
+        ModulePanel("Keys") {
+            if device.offboarded {
+                Button("Load key file…", action: loadKeyFile)
+                    .buttonStyle(.softKey)
+                    .disabled(!device.running)
+                    .help("Onboard from a .equalkeys file, as from a USB drive or NFC tag")
+            } else {
+                Button("Offboard") {
+                    if confirm("Offboard the device?", "It deletes its keys and beacons until it's onboarded again here. This is the physical reset, so it works at any time.", button: "Offboard") {
+                        device.physicalOffboard()
+                    }
+                }
+                .buttonStyle(.softKey)
+                .help("The fixture's reset button: delete the keys now, no 5-minute window")
+            }
+        } content: {
+            ReadoutRow(label: "State", value: device.offboarded ? "Offboarded: no keys" : device.running ? "Onboarded" : "Onboarded at start (app passphrase)")
+            if device.offboarded {
+                ReadoutRow(label: "Passphrase", value: nil,
+                           set: .text(initial: "") { text, done in
+                               done(device.onboard(passphrase: text).map(Signal.refused) ?? .latched)
+                           },
+                           enabled: device.running)
+                note(device.running
+                     ? "Type the network's passphrase as on the fixture's own keypad. A wrong but valid one onboards it with the wrong keys, so Managers can't reach it."
+                     : "It beacons when started, until onboarded here.")
+            }
+        }
+    }
+
+    private func loadKeyFile() {
+        let panel = NSOpenPanel()
+        panel.message = "Choose a Sig-Net key file (.equalkeys)"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let why: String?
+        do { why = device.onboard(keyFile: try Data(contentsOf: url)) } catch { why = error.localizedDescription }
+        if let why {
+            let alert = NSAlert()
+            alert.messageText = "The device didn't take the key file"
+            alert.informativeText = why
+            alert.runModal()
         }
     }
 
