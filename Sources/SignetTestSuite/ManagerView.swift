@@ -256,6 +256,10 @@ private struct ManagerDevicePanel: View {
                 if !device.anomaly.isEmpty {
                     Text(device.anomaly).font(.system(size: 11.5)).foregroundStyle(Color.lampFault).textSelection(.enabled)
                 }
+                ForEach(device.security.keys.sorted().filter { mgrU32(device.security[$0]![2...]) > 0 }, id: \.self) { code in
+                    Text(ManagerLabels.value(0xFF01, device.security[code]!))
+                        .font(.system(size: 11.5, design: .monospaced)).foregroundStyle(Color.lampFault).textSelection(.enabled)
+                }
             }
             Spacer()
             indicator("Online", lampColor(device))

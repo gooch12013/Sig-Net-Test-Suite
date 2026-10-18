@@ -94,7 +94,11 @@ struct ManagerFixturesView: View {
         let rdm = all.filter { (device.params[$0]?[0x0904].map { mgrU32([UInt8](repeating: 0, count: max(0, 4 - $0.count)) + $0) & 0x0C != 0 }) ?? true }
         return rdm.isEmpty ? all : rdm
     }
-    private var uids: [String] { (device.tod[port] ?? []).map(Identity.hex) }
+    /// The port's fixtures. The node's own RDM-Responder (PF §6.7: its RDM UID is its TUID) is left out: a gateway
+    /// lists itself in its port's ToD, but it is the node, so it gets the pinned "This node" row instead.
+    private var uids: [String] { (device.tod[port] ?? []).map(Identity.hex).filter { $0 != device.id } }
+    /// The port whose ToD lists the node itself, or nil when the node has no RDM-Responder of its own.
+    private var nodePort: UInt16? { ports.first { (device.tod[$0] ?? []).map(Identity.hex).contains(device.id) } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -110,6 +114,11 @@ struct ManagerFixturesView: View {
                 ModulePanel("Fixtures") {
                     Text("\(uids.count)").font(.system(size: 11, design: .monospaced)).foregroundStyle(Color.silk)
                 } content: {
+                    if nodePort != nil {
+                        Button { uid = device.id } label: { fixtureRow(device.id, title: "This node") }.buttonStyle(.plain)
+                            .accessibilityAddTraits(device.id == uid ? .isSelected : [])
+                            .help("The node's own RDM-Responder: manage the node itself by RDM")
+                    }
                     if uids.isEmpty {
                         Text("None listed. Press Discover.").font(.system(size: 12)).foregroundStyle(Color.silk)
                     }
@@ -120,7 +129,7 @@ struct ManagerFixturesView: View {
                 }
                 .frame(width: 220)
                 if let uid {
-                    ManagerFixturePanel(manager: manager, device: device, port: port, uid: uid, store: store)
+                    ManagerFixturePanel(manager: manager, device: device, port: uid == device.id ? nodePort ?? port : port, uid: uid, store: store)
                 } else {
                     Spacer()
                 }
@@ -132,15 +141,15 @@ struct ManagerFixturesView: View {
             if uid == nil { uid = uids.first }
         }
         .onChange(of: port) { _ in uid = nil; if uids.isEmpty { loadList() } else { uid = uids.first } }
-        .onChange(of: uids) { list in if uid == nil || !list.contains(uid!) { uid = list.first } }
+        .onChange(of: uids) { list in if uid == nil || (uid != device.id && !list.contains(uid!)) { uid = list.first } }
     }
 
-    private func fixtureRow(_ u: String) -> some View {
+    private func fixtureRow(_ u: String, title: String? = nil) -> some View {
         let f = store.byUID[u]
         return HStack(alignment: .top, spacing: 9) {
             Lamp(color: f?.values[0x1000]?.first.map { $0 != 0 ? Color.lampLatch : nil } ?? nil).padding(.top, 4)
             VStack(alignment: .leading, spacing: 2) {
-                Text(f?.label.flatMap { $0.isEmpty ? nil : $0 } ?? "Fixture").font(.system(size: 13, weight: .semibold)).foregroundStyle(Color.ink)
+                Text(title ?? f?.label.flatMap { $0.isEmpty ? nil : $0 } ?? "Fixture").font(.system(size: 13, weight: .semibold)).foregroundStyle(Color.ink)
                 Text(ManagerRDM.uid(mgrBytes(hex: u) ?? [0, 0, 0, 0, 0, 0])).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Color.silk)
             }
             Spacer(minLength: 0)
@@ -211,7 +220,8 @@ private struct ManagerFixturePanel: View {
                 }
             }
             ModulePanel("Channels") {
-                Button("Read channels") { loadChannels() }.buttonStyle(.softKey).disabled(!enabled)
+                // The layout may have changed elsewhere (front panel, another controller): footprint and personality first.
+                Button("Read channels") { get(0x0060) { _ in get(0x00E0) { _ in loadChannels() } } }.buttonStyle(.softKey).disabled(!enabled)
             } content: {
                 if f.channels.isEmpty {
                     Text(f.footprint.map { "\($0) channels. Press Read channels for what each one does." } ?? "Press Read channels for what each one does.")
@@ -394,6 +404,7 @@ private struct ManagerFixturePanel: View {
         rdm(false, 0x0120, []) { pd in
             let offsets: [UInt16] = pd.map { p in stride(from: 0, to: p.count - 4, by: 5).map { mgrU16(p[$0...]) } }
                 ?? (0..<(f.footprint ?? 0)).map(UInt16.init)
+            store.byUID[uid, default: .init()].channels = [:] // a fresh read replaces the list; a shorter layout leaves no stale channels
             runSteps(offsets.map { slot in { next in
                 rdm(false, 0x0121, mgrBE16(slot)) { d in
                     store.byUID[uid, default: .init()].channels[slot] = d.map { String(decoding: $0.dropFirst(2), as: UTF8.self) } ?? "No description"

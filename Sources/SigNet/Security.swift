@@ -102,6 +102,15 @@ open class SecurityConfig {
         wipe(&u)
         return k0
     }
+
+    /// PF §7.5 ".equalkeys" file for loading K0 onto a device out-of-band (e.g. a USB stick): K0 as 64 uppercase hex.
+    public func equalKeysJSON() throws -> String {
+        var k0 = try rootKey()
+        defer { wipe(&k0) }
+        guard k0.count == 32 else { throw SigNetError("Export needs Secure mode and a valid passphrase") }
+        let hex = k0.map { String(format: "%02X", $0) }.joined()
+        return #"{"sig-net_equal_keys":{"scope":"\#(scopeOrDefault)","k0":"\#(hex)"}}"#
+    }
 }
 
 /// PF §7.5 machine-readable K0 transfer (USB drive, NFC): `{"sig-net_equal_keys": {"scope": "local", "k0": "<64 hex>"}}`,

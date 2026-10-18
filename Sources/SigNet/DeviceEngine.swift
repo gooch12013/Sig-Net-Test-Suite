@@ -414,7 +414,9 @@ open class DeviceEngine {
         case 0x060B: v = [0] + Array(modelName.utf8.prefix(64))
         case 0xFF01: return (1...UInt16(8)).map(securityTLV)
         case 0x0306: v = [8, 8] // virtual responder answers at once: the FIFO never fills
-        case 0x0904: v = mgrBE32(0x15) // consume LEVEL, consume RDM, virtual
+        // PF V1.11 §11.7.4, 6 bytes: consume LEVEL, consume RDM, virtual; bit 5 clear (the merge below is plain HTP,
+        // no per-slot priority); then Maximum Merge Sources = 4, the §10.6 minimum.
+        case 0x0904: v = mgrBE32(0x15) + mgrBE16(4)
         case 0x0907: v = mgrBE32(epStatus[Int(ep) - 1])
         case 0xFF03: v = merged[Int(ep) - 1].isEmpty ? [0] : merged[Int(ep) - 1]
         default: v = params[Self.key(tid, ep)]

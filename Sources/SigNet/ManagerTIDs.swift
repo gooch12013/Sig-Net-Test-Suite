@@ -97,8 +97,10 @@ public struct ManagerTID: Identifiable, Hashable {
         case 0x060D where v.count == 3: return "port \(mgrU16(v)) " + bits(UInt32(v[2]))
         case 0x0908 where v.count == 3: return "mode \(v[0]) scene \(mgrU16(v[1...]))"
         case 0xFF01 where v.count >= 7:
-            var s = String(format: "code 0x%04X count %d", mgrU16(v), mgrU32(v[2...]))
-            if v[6] == 1, v.count >= 11 { s += " from " + ip4(Array(v[7..<11])) }
+            let code = mgrU16(v)
+            var s = (securityEvents[code] ?? String(format: "code 0x%04X", code)) + " × \(mgrU32(v[2...]))"
+            if v[6] == 1, v.count >= 11, v[7..<11].contains(where: { $0 != 0 }) { s += ", last from " + ip4(Array(v[7..<11])) } // 0.0.0.0 = unknown (a ChamSys GN2 sends that rather than type 0)
+            if v[6] == 2, v.count >= 23 { s += ", last from " + stride(from: 7, to: 23, by: 2).map { String(format: "%x", mgrU16(v[$0...])) }.joined(separator: ":") }
             return s
         default: break
         }
@@ -110,11 +112,19 @@ public struct ManagerTID: Identifiable, Hashable {
         case (.u32, 4): return "\(mgrU32(v))"
         case (.bits8, 1): return bits(UInt32(v[0]))
         case (.bits32, 4): return bits(mgrU32(v))
+        case (.bits32, 6) where tid == 0x0904: // PF V1.11 §11.7.4: [0-3] bits, [4-5] Maximum Merge Sources
+            return describe(tid, Array(v.prefix(4))) + " max merge \(mgrU16(v.dropFirst(4)))"
         case (.ipv4, 4): return ip4(v)
         case (.ipv6, 16): return stride(from: 0, to: 16, by: 2).map { String(format: "%x", mgrU16(v[$0...])) }.joined(separator: ":")
         default: return v.isEmpty ? "(empty)" : mgrHex(v)
         }
     }
+
+    /// PF §11.8.1 event codes.
+    static let securityEvents: [UInt16: String] = [
+        1: "HMAC failure", 2: "Replay", 3: "DoS rate limit", 4: "Unauthorised onboarding", 5: "Sender table full",
+        6: "Session ID went back", 7: "Sequence not advancing", 8: "Offboard after lockout",
+    ]
 
     static func ip4(_ b: [UInt8]) -> String { b.map(String.init).joined(separator: ".") }
 

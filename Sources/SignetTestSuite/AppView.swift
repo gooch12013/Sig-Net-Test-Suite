@@ -114,6 +114,9 @@ struct SecurityPanel: View {
                 Lamp(color: settings.passphraseProblem == nil ? .lampOnline : .lampFault)
                     .help(settings.passphraseProblem ?? "Passphrase OK")
                     .accessibilityLabel(settings.passphraseProblem ?? "Passphrase OK")
+                Button("Export Key…", action: exportKey)
+                    .disabled(settings.passphraseProblem != nil)
+                    .help("Save K0 as a .equalkeys file (PF §7.5), e.g. to a USB stick for a device's Load Key from USB. Wipe the stick afterwards.")
             }
             Silkscreen("Scope")
             ReadoutWindow {
@@ -131,5 +134,19 @@ struct SecurityPanel: View {
             }
         }
         .disabled(settings.locked)
+    }
+
+    /// Starts in /Volumes so a mounted USB stick is one click away; the file goes in the stick's root, where devices look.
+    private func exportKey() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "sig-net-\(settings.scopeOrDefault).equalkeys"
+        panel.directoryURL = URL(fileURLWithPath: "/Volumes")
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do { try settings.equalKeysJSON().write(to: url, atomically: true, encoding: .ascii) } catch {
+            let alert = NSAlert()
+            alert.messageText = "Key not exported"
+            alert.informativeText = "\(error)"
+            alert.runModal()
+        }
     }
 }

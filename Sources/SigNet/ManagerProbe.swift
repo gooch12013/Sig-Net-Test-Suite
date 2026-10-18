@@ -55,10 +55,11 @@ extension ManagerEngine {
             }
         }
 
-        // 2. GET every catalogue TID on its endpoints, one TID per request.
-        print("\n== GET (one TID per request)")
+        // 2. GET every catalogue TID on its endpoints, one TID per request. Data endpoints: as many as the node says.
+        let dataEps = (1...max(1, Int(m.devices[nodeHex]?.root(0x0602).map(mgrU16) ?? 2))).map { UInt16($0) }
+        print("\n== GET (one TID per request) · data endpoints \(dataEps.map(String.init).joined(separator: ","))")
         for t in ManagerTID.all where t.get {
-            let eps: [UInt16] = t.scope == "R" ? [0] : t.scope == "D" ? [1, 2] : [0, 1, 2]
+            let eps: [UInt16] = t.scope == "R" ? [0] : t.scope == "D" ? dataEps : [0] + dataEps
             for ep in eps {
                 let r = wait { m.get(node, ep: ep, tids: [t.tid], done: $0) }
                 let tlvs = r?.tlvs.filter { $0.tid == t.tid } ?? [] // some TIDs (DG_SECURITY_EVENT) answer with several TLVs
@@ -74,6 +75,7 @@ extension ManagerEngine {
             wait { m.get(node, ep: ep, tids: [tid], done: $0) }?.tlvs.first { $0.tid == tid }?.value
         }
         func roundTrip(_ tid: UInt16, ep: UInt16, test: ([UInt8]) -> [UInt8]) {
+            guard ep == 0 || dataEps.contains(ep) else { return } // the node has no such endpoint
             let name = "\(String(format: "0x%04X", tid)) \(ManagerTID.name(tid)) ep\(ep)"
             guard let orig = value(tid, ep) else { return print("\(name): skipped, GET of the original value failed") }
             let cc0 = m.devices[nodeHex]?.changeCount
@@ -149,7 +151,7 @@ extension ManagerEngine {
         print("\n== RDM (ep1)")
         let fixture = mgrBytes(hex: arg("--rdm-uid") ?? "21A43DA458B0") ?? []
         func flow(_ when: String) {
-            for ep: UInt16 in [1, 2] { print("RDM_FLOW_CONTROL ep\(ep) \(when): \(value(0x0306, ep).map(mgrHex) ?? "– no reply")") }
+            for ep in dataEps { print("RDM_FLOW_CONTROL ep\(ep) \(when): \(value(0x0306, ep).map(mgrHex) ?? "– no reply")") }
         }
         flow("before")
         m.flushToD(node, ep: 1)
@@ -170,6 +172,23 @@ extension ManagerEngine {
         for slot: UInt16 in 0...10 { rdm("GET SLOT_DESCRIPTION \(slot)", pid: 0x0121, pd: mgrBE16(slot)) }
         rdm("SET IDENTIFY_DEVICE 1", set: true, pid: 0x1000, pd: [1])
         rdm("SET IDENTIFY_DEVICE 0", set: true, pid: 0x1000, pd: [0])
+
+        // 4b. The node's own RDM-Responder, if it lists itself in the port's ToD (PF §6.7: RDM UID = TUID).
+        print("\n== RDM (this node)")
+        if uids.contains(where: { $0 == node }) {
+            func nodeRDM(_ label: String, set: Bool = false, pid: UInt16, pd: [UInt8] = []) {
+                let r = wait { m.rdm(node, ep: 1, dest: node, set: set, pid: pid, pd: pd, done: $0) }
+                guard let r, r.ok else { return print("\(label): FAILED \(r?.text ?? "no result")") }
+                print("\(label): \(ManagerRDM.describe(r.frame)) · checksum \(ManagerRDM.valid(r.frame) ? "ok" : "BAD") · \(r.frame.count) B")
+            }
+            nodeRDM("GET DEVICE_INFO", pid: 0x0060)
+            nodeRDM("GET SUPPORTED_PARAMETERS", pid: 0x0050)
+            nodeRDM("GET DEVICE_LABEL", pid: 0x0082)
+            nodeRDM("GET PARAMETER_DESCRIPTION 0x8002", pid: 0x0051, pd: [0x80, 0x02])
+            nodeRDM("GET 0x8002", pid: 0x8002)
+        } else {
+            print("not listed in ep1's ToD: the node has no RDM-Responder of its own")
+        }
         flow("after")
 
         // 5. Anything the Manager flagged.

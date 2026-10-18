@@ -54,8 +54,12 @@ public enum ManagerLabels {
         case 0x0608: return bits([0: "Hardware fault", 1: "Factory defaults", 2: "Locked at device", 3: "Open Mode"], none: "Normal")
         case 0x0609: return bits([0: "Node", 1: "Sender", 2: "Manager", 3: "Visualiser", 6: "Root firmware updates",
                                   7: "Open Mode supported"], none: "None")
-        case 0x0904: return bits([0: "Receives levels", 1: "Sends levels", 2: "RDM to fixtures", 3: "RDM from fixtures",
-                                  4: "Virtual", 5: "Per-channel priority"], none: "None")
+        case 0x0904:
+            // PF V1.11 §11.7.4 adds [4-5] Maximum Merge Sources; a V1.10 device sends only the 4-byte bit field.
+            let caps = bits([0: "Receives levels", 1: "Sends levels", 2: "RDM to fixtures", 3: "RDM from fixtures",
+                             4: "Virtual", 5: "Per-channel priority"], none: "None")
+            let merge = v.count >= 6 ? mgrU16(v.dropFirst(4)) : 0
+            return merge > 0 ? caps + " · merges up to \(merge) sources" : caps
         case 0x0305: return ["Off", "Background discovery", "Queue polling", "Discovery and queue polling"][Int((v.first ?? 0) & 3)]
         case 0x0306 where v.count >= 2: return "\(v[1]) of \(v[0]) slots free"
         case 0x0502: return v.first == 1 ? "DHCP" : "Static"
@@ -65,7 +69,9 @@ public enum ManagerLabels {
         case 0x0602: return "\(mgrU16(v))"
         case 0x0604 where v.count >= 4:
             let text = String(decoding: v.dropFirst(4), as: UTF8.self)
-            return (text.isEmpty ? "Version" : text) + " · build \(mgrU32(v))"
+            // The text is optional (§11.6.4). Without it, show the ID one byte per part, as MagicQ does (05 00 02 00 → v5.0.2.0).
+            if text.isEmpty { return "v" + v.prefix(4).map { String($0) }.joined(separator: ".") + String(format: " · ID 0x%08X", mgrU32(v)) }
+            return text + " · build \(mgrU32(v))"
         case 0x0501: return v.map { String(format: "%02X", $0) }.joined(separator: ":")
         case 0x0606: return v.first == 0 ? "Default addresses" : "Custom addresses"
         case 0x0908 where !v.isEmpty:
